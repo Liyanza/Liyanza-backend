@@ -1,0 +1,61 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: liyanza_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: liyanza_user
+      POSTGRES_PASSWORD: liyanza_password
+      POSTGRES_DB: liyanza_db
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U liyanza_user -d liyanza_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - liyanza_network
+
+  redis:
+    image: redis:7-alpine
+    container_name: liyanza_redis
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - liyanza_network
+
+  api:
+    build: .
+    container_name: liyanza_api
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      PORT: 3000
+      # NOTE: En local via Docker Compose, on utilise le nom du service comme hostname
+      DATABASE_URL: postgresql://liyanza_user:liyanza_password@postgres:5432/liyanza_db
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: dev_jwt_secret_do_not_use_in_production
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - liyanza_network
+
+volumes:
+  postgres_data:
+
+networks:
+  liyanza_network:
+    driver: bridge
