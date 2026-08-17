@@ -21,6 +21,20 @@ Ce dépôt est le backend principal (NestJS / TypeScript) de la plateforme Liyan
 - **CI/CD** : GitHub Actions
 - **Déploiement** : AWS ECS Fargate
 
+## 🐳 Démarrer avec Docker (environnement complet)
+
+L'environnement de développement complet (API + PostgreSQL + Redis) peut être lancé en une seule commande via Docker Compose.
+
+**Prérequis** : Docker et Docker Compose installés sur votre machine.
+
+### Première exécution
+1.  **Générer le fichier de verrouillage** :
+    *   L'image Docker utilise `npm ci` pour garantir la reproductibilité.
+    *   Avant de builder, exécutez `npm install` en local pour générer le `package-lock.json`. **Commitez ce fichier** dans le dépôt.
+2.  **Lancer tous les services** :
+    ```bash
+    docker compose up -d
+
 ## 🚀 Démarrage local
 
 ```bash
