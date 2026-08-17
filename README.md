@@ -27,6 +27,26 @@ L'environnement de développement complet (API + PostgreSQL + Redis) peut être 
 
 **Prérequis** : Docker et Docker Compose installés sur votre machine.
 
+## 🔐 Variables d'environnement
+
+L'application utilise `@nestjs/config` avec validation stricte au démarrage.
+
+| Variable         | Requise | Description                                    | Exemple                                    |
+| ---------------- | ------- | ---------------------------------------------- | ------------------------------------------ |
+| `NODE_ENV`       | Oui     | Environnement d'exécution                      | `development`, `production`, `test`        |
+| `PORT`           | Oui     | Port d'écoute de l'API                         | `3000`                                     |
+| `DATABASE_URL`   | Oui     | URL de connexion PostgreSQL                    | `postgresql://user:pass@localhost:5432/db` |
+| `REDIS_URL`      | Oui     | URL de connexion Redis                         | `redis://localhost:6379`                   |
+| `JWT_SECRET`     | Oui     | Clé secrète pour signer les tokens JWT         | `supersecretkey`                           |
+| `JWT_EXPIRATION` | Non     | Durée de validité des tokens (par défaut `7d`) | `7d`, `1h`, `30m`                          |
+
+> ⚠️ **Important** : Ne jamais logger l'intégralité de la configuration (risque de fuite de secrets). Utilisez `ConfigService` uniquement pour accéder aux valeurs nécessaires.
+
+Pour lancer l'application en local, copiez `.env.example` vers `.env` et ajustez les valeurs si besoin :
+
+````bash
+cp .env.example .env
+
 ### Première exécution
 
 1.  **Générer le fichier de verrouillage** :
@@ -49,4 +69,4 @@ npm ci
 
 # 3. Démarrer en mode développement
 npm run start:dev
-```
+````
