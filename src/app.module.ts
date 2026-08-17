@@ -2,15 +2,20 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
+import { validate } from './config/env.validation';
+import appConfig from './config/app.config';
+import databaseConfig from './config/database.config';
+import jwtConfig from './config/jwt.config';
+import redisConfig from './config/redis.config';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({ isGlobal: true }),
-    // Modules de domaine à importer dynamiquement en Phase 1+
-    // AuthModule,
-    // UsersModule,
-    // EntreprisesModule,
-    // CampagnesModule,
+    ConfigModule.forRoot({
+      isGlobal: true,
+      load: [appConfig, databaseConfig, jwtConfig, redisConfig],
+      validate,
+    }),
+    // Les futurs modules (Auth, Users, etc.) seront importés ici
   ],
   controllers: [AppController],
   providers: [AppService],
