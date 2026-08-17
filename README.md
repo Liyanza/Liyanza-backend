@@ -28,12 +28,14 @@ L'environnement de développement complet (API + PostgreSQL + Redis) peut être 
 **Prérequis** : Docker et Docker Compose installés sur votre machine.
 
 ### Première exécution
+
 1.  **Générer le fichier de verrouillage** :
-    *   L'image Docker utilise `npm ci` pour garantir la reproductibilité.
-    *   Avant de builder, exécutez `npm install` en local pour générer le `package-lock.json`. **Commitez ce fichier** dans le dépôt.
+    - L'image Docker utilise `npm ci` pour garantir la reproductibilité.
+    - Avant de builder, exécutez `npm install` en local pour générer le `package-lock.json`. **Commitez ce fichier** dans le dépôt.
 2.  **Lancer tous les services** :
     ```bash
     docker compose up -d
+    ```
 
 ## 🚀 Démarrage local
 
@@ -47,3 +49,4 @@ npm ci
 
 # 3. Démarrer en mode développement
 npm run start:dev
+```
