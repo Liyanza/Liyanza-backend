@@ -7,6 +7,10 @@ datasource db {
   // url      = env("DATABASE_URL")
 }
 
+/// Rôles applicatifs, alignés sur le besoin "sous-comptes & permissions" du cadrage.
+/// Liste initiale à valider avec le PO — de nouvelles valeurs pourront être ajoutées
+/// via une simple migration additive (ALTER TYPE ... ADD VALUE), sans réécriture
+/// de données ni migration lourde.
 enum Role {
   ADMIN
   MARKETING_MANAGER
@@ -14,6 +18,7 @@ enum Role {
   PROVIDER
 }
 
+/// Entité ENTREPRISE du MCD — racine du multi-tenant.
 model Company {
   id             String   @id @default(cuid())
   name           String
@@ -22,21 +27,113 @@ model Company {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
+  // Relation APPARTENIR_ENTREPRISE (côté 0,N : une entreprise a 0..N utilisateurs)
   users User[]
 }
 
+/// Entité UTILISATEUR du MCD.
 model User {
   id        String   @id @default(cuid())
   firstName String
   lastName  String
   email     String   @unique
+  /// Hash du mot de passe (argon2/bcrypt) — ne JAMAIS stocker le mot de passe en clair.
+  /// Le hachage effectif est implémenté dans BACK-105.
   password  String
   phone     String
   role      Role
   createdAt DateTime @default(now())
 
+  // Relation APPARTENIR_ENTREPRISE (côté 0,1 : un utilisateur appartient à 0 ou 1 entreprise)
   companyId String?
   company   Company? @relation(fields: [companyId], references: [id])
 
+  // Back-relations ajoutées par BACK-103 / BACK-104
+  campaigns     Campaign[]     // LANCER : campagnes lancées par cet utilisateur
+  // installations Installation[] // REALISER : prestations terrain réalisées par ce prestataire
+  // notifications Notification[] // RECEVOIR : notifications reçues par cet utilisateur
+
   @@index([companyId])
+}
+
+// =====================================================================
+// BACK-103 — Campagnes, Canaux & Diffusion
+// =====================================================================
+
+/// Entité CAMPAGNE du MCD.
+model Campaign {
+  id             String   @id @default(cuid())
+  name           String
+  startDate      DateTime
+  endDate        DateTime
+  /// Montants financiers en Decimal (jamais Float) pour éviter les erreurs d'arrondi.
+  plannedBudget  Decimal  @db.Decimal(12, 2)
+  actualBudget   Decimal  @db.Decimal(12, 2)
+  status         String
+  objective      String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  // Relation LANCER (1,1 côté Campaign : chaque campagne a un unique lanceur / 0,N côté User)
+  launchedById String
+  launchedBy   User   @relation(fields: [launchedById], references: [id])
+
+  // Relation COMPORTER (1,N côté Campaign : une campagne comporte 1..N canaux)
+  channels AdvertisingChannel[]
+
+  // Relation PLANIFIER (1,N côté Campaign : une campagne planifie 1..N diffusions)
+  broadcasts Broadcast[]
+
+  // Relation OUVRIR (0,N côté Campaign : une campagne peut ouvrir 0..N prestations terrain)
+  // installations Installation[]
+
+  // // Relation GENERER_STAT (1,N côté Campaign : une campagne génère 1..N statistiques)
+  // statistics Statistic[]
+
+  @@index([launchedById])
+}
+
+/// Entité CANAUX_PUBLICITAIRE du MCD.
+/// NB : le MCD fourni (OCR, sans tracé des liens visibles) ne permet pas de déterminer
+/// avec certitude le sens de COMPORTER. On retient ici l'interprétation la plus cohérente
+/// avec le use case "Choisir les canaux de diffusion" (une campagne choisit plusieurs
+/// canaux) : Campaign 1 --- N AdvertisingChannel. À reconfirmer en revue de schéma.
+model AdvertisingChannel {
+  id        String  @id @default(cuid())
+  radio     Boolean
+  poster    Boolean // affichePub
+  flyer     Boolean
+
+  // Relation COMPORTER (1,1 côté AdvertisingChannel : un canal appartient à une seule campagne)
+  campaignId String
+  campaign   Campaign @relation(fields: [campaignId], references: [id])
+
+  // Relation REPARTIR (1,N côté AdvertisingChannel : un canal peut être réparti sur 1..N diffusions)
+  broadcasts Broadcast[]
+
+  @@index([campaignId])
+}
+
+/// Entité DIFFUSION du MCD.
+model Broadcast {
+  id             String   @id @default(cuid())
+  mediaType      String   // typeMedia
+  scheduledAt    DateTime // dateHeureDiffusion (heure prévue)
+  /// Durée en secondes.
+  duration       Int
+  status         String   // statutDiffusion
+  audioProof     String?  // preuveAudio (URL/chemin de l'enregistrement de preuve)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  // Relation PLANIFIER (1,1 côté Broadcast : une diffusion appartient à une seule campagne)
+  campaignId String
+  campaign   Campaign @relation(fields: [campaignId], references: [id])
+
+  // Relation REPARTIR (1,1 côté Broadcast : une diffusion est répartie sur un seul canal)
+  channelId String
+  channel   AdvertisingChannel @relation(fields: [channelId], references: [id])
+
+  @@index([campaignId])
+  @@index([channelId])
 }
