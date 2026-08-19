@@ -20,8 +20,12 @@ jobs:
           node-version: 20
           cache: 'npm'
 
+      # Synchronisation du lockfile sans exécuter les scripts (évite "husky not found")
+      - name: Sync lockfile
+        run: npm install --package-lock-only --ignore-scripts
+
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: Run ESLint
         run: npm run lint
@@ -39,8 +43,11 @@ jobs:
           node-version: 20
           cache: 'npm'
 
+      - name: Sync lockfile
+        run: npm install --package-lock-only --ignore-scripts
+
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: Build project
         run: npm run build
@@ -48,7 +55,6 @@ jobs:
   test:
     name: Test (unit)
     runs-on: ubuntu-latest
-    # Service PostgreSQL éphémère pour les futurs tests d'intégration
     services:
       postgres:
         image: postgres:16-alpine
@@ -73,18 +79,13 @@ jobs:
           node-version: 20
           cache: 'npm'
 
+      - name: Sync lockfile
+        run: npm install --package-lock-only --ignore-scripts
+
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: Run unit tests
         run: npm run test
         env:
-          # Optionnel : pour préparer les futurs tests nécessitant la DB
           DATABASE_URL: postgresql://liyanza_user:liyanza_password@localhost:5432/liyanza_db
-          # On peut aussi définir d'autres variables d'environnement si besoin
-
-  # Job optionnel pour les tests e2e (peut être ajouté plus tard)
-  # e2e:
-  #   name: E2E tests
-  #   runs-on: ubuntu-latest
-  #   ...
