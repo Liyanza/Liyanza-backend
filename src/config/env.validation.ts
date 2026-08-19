@@ -30,14 +30,18 @@ export class EnvironmentVariables {
   @IsUrl({ protocols: ['redis'], require_tld: false })
   REDIS_URL!: string;
 
-  // Security
+  // Security (JWT)
   @IsDefined()
   @IsString()
   JWT_SECRET!: string;
 
   @IsOptional()
   @IsString()
-  JWT_EXPIRATION?: string;
+  JWT_ACCESS_EXPIRATION?: string;
+
+  @IsOptional()
+  @IsString()
+  JWT_REFRESH_EXPIRATION?: string;
 }
 
 export function validate(config: Record<string, unknown>) {
@@ -51,7 +55,7 @@ export function validate(config: Record<string, unknown>) {
 
   if (errors.length > 0) {
     throw new Error(
-      `❌ Environnement invalide :\n${errors
+      `❌ Invalid environment:\n${errors
         .map(
           (err) =>
             `  - ${err.property}: ${Object.values(err.constraints ?? {}).join(', ')}`,

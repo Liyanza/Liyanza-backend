@@ -10,6 +10,9 @@ import jwtConfig from './config/jwt.config';
 import redisConfig from './config/redis.config';
 import { LoggerModule } from './modules/logger/logger.module';
 import { HealthModule } from './modules/health/health.module';
+import { PrismaModule } from './modules/prisma/prisma.module';
+import { RedisModule } from './modules/redis/redis.module';
+import { AuthModule } from './modules/auth/auth.module';
 import { RequestIdMiddleware } from './common/middleware/request-id.middleware';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 
@@ -22,6 +25,9 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
     }),
     LoggerModule,
     HealthModule,
+    PrismaModule,
+    RedisModule,
+    AuthModule,
   ],
   controllers: [AppController],
   providers: [
