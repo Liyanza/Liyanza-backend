@@ -6,6 +6,9 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtStrategy } from './strategies/jwt.strategy';
+import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { RolesGuard } from './guards/roles.guard';
+import { CompanyScopeGuard } from './guards/company-scope.guard';
 import { PrismaModule } from '../prisma/prisma.module';
 import { RedisModule } from '../redis/redis.module';
 
@@ -27,7 +30,17 @@ import { RedisModule } from '../redis/redis.module';
     RedisModule,
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy],
-  exports: [AuthService],
+  providers: [
+    AuthService,
+    JwtStrategy,
+    JwtAuthGuard,
+    RolesGuard,
+    CompanyScopeGuard,
+  ],
+  // JwtAuthGuard/RolesGuard sont aussi enregistrés globalement (APP_GUARD dans
+  // AppModule) ; on les exporte ici pour que les modules métier des phases
+  // suivantes puissent réutiliser CompanyScopeGuard (et au besoin surcharger
+  // localement) sans jamais dupliquer la logique RBAC/ownership.
+  exports: [AuthService, JwtAuthGuard, RolesGuard, CompanyScopeGuard],
 })
 export class AuthModule {}

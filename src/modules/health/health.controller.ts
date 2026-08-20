@@ -5,6 +5,7 @@ import {
   HealthIndicatorResult,
 } from '@nestjs/terminus';
 import { PrismaService } from '@modules/prisma/prisma.service';
+import { Public } from '../auth/decorators/public.decorator';
 
 @Controller('health')
 export class HealthController {
@@ -13,6 +14,8 @@ export class HealthController {
     private prisma: PrismaService,
   ) {}
 
+  // Public : interrogé sans JWT par l'Application Load Balancer / ECS.
+  @Public()
   @Get()
   @HealthCheck()
   check() {

@@ -42,6 +42,18 @@ export class EnvironmentVariables {
   @IsOptional()
   @IsString()
   JWT_REFRESH_EXPIRATION?: string;
+
+  // Security (CORS)
+  /**
+   * Whitelist d'origines autorisées, séparées par des virgules
+   * (ex: "https://app.liyanza.com,https://admin.liyanza.com").
+   * Le contrôle "pas de wildcard '*' en production" est fait au runtime
+   * dans main.ts (dépend de NODE_ENV, difficile à exprimer proprement en
+   * validateur déclaratif class-validator).
+   */
+  @IsDefined()
+  @IsString()
+  CORS_ORIGINS!: string;
 }
 
 export function validate(config: Record<string, unknown>) {
