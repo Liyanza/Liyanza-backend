@@ -67,6 +67,50 @@ cd Liyanza-backend
 # 2. Installer les dépendances
 npm ci
 
-# 3. Démarrer en mode développement
+# 3. Appliquer les migrations Prisma et générer le client
+npx prisma migrate dev
+
+# 4. Peupler la base avec un jeu de données de test (voir section dédiée ci-dessous)
+npx prisma db seed
+
+# 5. Démarrer en mode développement
 npm run start:dev
 ````
+
+## 🌱 Jeu de données de développement (seed)
+
+Pour éviter à chaque développeur de recréer manuellement une entreprise et des
+utilisateurs de test, le dépôt fournit un script de seed Prisma
+(`prisma/seed.ts`) qui insère :
+
+- **1 entreprise** de test (`Liyanza Demo SARL`) ;
+- **3 utilisateurs**, un par rôle clé (voir `docs/security.md` pour le détail
+  des rôles) : `ADMIN`, `MARKETING_MANAGER`, `PROVIDER` — mots de passe
+  hachés avec le même coût que `AuthService` (bcrypt, 10 rounds) ;
+- **1 campagne** et **1 canal de diffusion** d'exemple, pour tester
+  manuellement les endpoints de la Phase 2 sans passer par les formulaires de
+  création à chaque fois.
+
+### Exécuter le seed
+
+```bash
+# Recrée le schéma depuis zéro PUIS exécute automatiquement le seed
+npx prisma migrate reset
+
+# Ou, sans toucher au schéma : exécute uniquement le seed
+npx prisma db seed
+```
+
+Le script est **idempotent** : il utilise `upsert` sur des identifiants fixes
+et peut donc être relancé autant de fois que nécessaire sans dupliquer les
+données ni provoquer d'erreur de contrainte unique.
+
+### Comptes de test
+
+Les identifiants exacts (email + mot de passe) sont affichés dans la console
+à la fin de l'exécution du seed. Ils sont volontairement complexes (pas de
+mot de passe faible ou devinable), même si leur usage reste local.
+
+> ⚠️ **Le script refuse de s'exécuter si `NODE_ENV=production`** — c'est la
+> garde principale empêchant toute fuite de données de seed vers un
+> environnement réel. Ne contournez jamais cette vérification.
