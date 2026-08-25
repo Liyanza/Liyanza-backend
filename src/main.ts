@@ -15,7 +15,7 @@ const helmet: () => RequestHandler =
 
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create(AppModule, {
-    logger: false, // on désactive le logger par défaut
+    logger: ['error', 'warn', 'log'],
   });
 
   // Utiliser notre logger personnalisé
@@ -75,4 +75,7 @@ async function bootstrap(): Promise<void> {
   logger.log(`🚀 Liyanza-backend running on http://localhost:${port}`);
 }
 
-void bootstrap();
+bootstrap().catch((err) => {
+  console.error('❌ Bootstrap failed:', err);
+  process.exit(1);
+});
