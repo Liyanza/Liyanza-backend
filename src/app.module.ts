@@ -14,6 +14,7 @@ import { HealthModule } from './modules/health/health.module';
 import { PrismaModule } from './modules/prisma/prisma.module';
 import { RedisModule } from './modules/redis/redis.module';
 import { AuthModule } from './modules/auth/auth.module';
+import { EntreprisesModule } from './modules/entreprises/entreprises.module';
 import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
 import { RolesGuard } from './modules/auth/guards/roles.guard';
 import { RequestIdMiddleware } from './common/middleware/request-id.middleware';
@@ -31,6 +32,7 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
     PrismaModule,
     RedisModule,
     AuthModule,
+    EntreprisesModule,
   ],
   controllers: [AppController],
   providers: [
@@ -40,9 +42,6 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
       provide: APP_FILTER,
       useClass: AllExceptionsFilter,
     },
-    // Ordre d'exécution Nest : APP_GUARD s'exécutent dans l'ordre de
-    // déclaration. JwtAuthGuard (authentification) DOIT tourner avant
-    // RolesGuard (autorisation), qui dépend de request.user déjà hydraté.
     {
       provide: APP_GUARD,
       useClass: JwtAuthGuard,
