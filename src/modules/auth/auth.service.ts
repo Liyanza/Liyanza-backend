@@ -59,6 +59,10 @@ export class AuthService {
       throw new UnauthorizedException('Invalid credentials.');
     }
 
+    if (user.deactivatedAt) {
+      throw new UnauthorizedException('Invalid credentials.');
+    }
+
     const isPasswordValid = await bcrypt.compare(dto.password, user.password);
     if (!isPasswordValid) {
       throw new UnauthorizedException('Invalid credentials.');
@@ -107,6 +111,12 @@ export class AuthService {
     try {
       const payload = this.jwtService.verify(refreshToken);
       const userId = payload.sub;
+
+      // Verify user still exists and is not deactivated
+      const user = await this.prisma.user.findUnique({ where: { id: userId } });
+      if (!user || user.deactivatedAt) {
+        throw new UnauthorizedException('Invalid refresh token.');
+      }
 
       const storedToken = await this.redisService.get(`refresh:${userId}`);
       if (storedToken !== refreshToken) {

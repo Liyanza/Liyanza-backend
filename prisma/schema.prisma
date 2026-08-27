@@ -37,14 +37,12 @@ model User {
   firstName String
   lastName  String
   email     String   @unique
-  /// Hash du mot de passe (argon2/bcrypt) — ne JAMAIS stocker le mot de passe en clair.
-  /// Le hachage effectif est implémenté dans BACK-105.
   password  String
   phone     String
   role      Role
   createdAt DateTime @default(now())
+  deactivatedAt DateTime?
 
-  // Relation APPARTENIR_ENTREPRISE (côté 0,1 : un utilisateur appartient à 0 ou 1 entreprise)
   companyId String?
   company   Company? @relation(fields: [companyId], references: [id])
 
