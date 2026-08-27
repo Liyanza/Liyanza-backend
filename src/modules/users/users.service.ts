@@ -15,17 +15,10 @@ import { Role } from '@prisma/client';
 export class UsersService {
   constructor(private prisma: PrismaService) {}
 
-  /**
-   * Generate a temporary password (16 alphanumeric characters)
-   */
   private generateTemporaryPassword(): string {
-    return randomBytes(8).toString('hex'); // 16 hex characters
+    return randomBytes(8).toString('hex');
   }
 
-  /**
-   * Create a sub‑account for the admin's company.
-   * The password is hashed and stored; it is not returned.
-   */
   async createSubAccount(dto: CreateSubAccountDto, admin: AuthenticatedUser) {
     if (!admin.companyId) {
       throw new ForbiddenException(
@@ -56,20 +49,27 @@ export class UsersService {
     });
 
     // TODO: send temporary password via Notification module (Phase 3)
-    // For now, log it in development only
     if (process.env.NODE_ENV !== 'production') {
       console.log(
         `[UsersService] Temporary password for ${user.email}: ${plainPassword}`,
       );
     }
 
-    const { password, ...result } = user;
+    // Exclude password from the response
+    const result = {
+      id: user.id,
+      email: user.email,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      phone: user.phone,
+      role: user.role,
+      companyId: user.companyId,
+      createdAt: user.createdAt,
+      deactivatedAt: user.deactivatedAt,
+    };
     return result;
   }
 
-  /**
-   * List all users belonging to the admin's company.
-   */
   async findAll(admin: AuthenticatedUser) {
     if (!admin.companyId) {
       throw new ForbiddenException(
@@ -94,10 +94,6 @@ export class UsersService {
     });
   }
 
-  /**
-   * Change a user's role.
-   * Prevents the admin from changing their own role.
-   */
   async updateRole(userId: string, newRole: Role, admin: AuthenticatedUser) {
     if (!admin.companyId) {
       throw new ForbiddenException(
@@ -133,10 +129,6 @@ export class UsersService {
     });
   }
 
-  /**
-   * Deactivate a user account (set deactivatedAt).
-   * Allows deactivating own account as well.
-   */
   async deactivate(userId: string, admin: AuthenticatedUser) {
     if (!admin.companyId) {
       throw new ForbiddenException(
@@ -157,9 +149,6 @@ export class UsersService {
     });
   }
 
-  /**
-   * Get the profile of the authenticated user.
-   */
   async getProfile(user: AuthenticatedUser) {
     const dbUser = await this.prisma.user.findUnique({
       where: { id: user.userId },

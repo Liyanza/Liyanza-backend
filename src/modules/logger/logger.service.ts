@@ -20,7 +20,7 @@ export class LoggerService extends ConsoleLogger {
     const logEntry: Record<string, any> = {
       level,
       timestamp: new Date().toISOString(),
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+
       message,
       context,
       requestId: this.getRequestId(),
