@@ -17,6 +17,14 @@ enum Role {
   PROVIDER
 }
 
+enum CampaignStatus {
+  DRAFT
+  PLANNED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
 /// Entité ENTREPRISE du MCD — racine du multi-tenant.
 model Company {
   id             String   @id @default(cuid())
@@ -58,35 +66,25 @@ model User {
 // BACK-103 — Campagnes, Canaux & Diffusion
 // =====================================================================
 
-/// Entité CAMPAGNE du MCD.
 model Campaign {
   id             String   @id @default(cuid())
   name           String
   startDate      DateTime
   endDate        DateTime
-  /// Montants financiers en Decimal (jamais Float) pour éviter les erreurs d'arrondi.
   plannedBudget  Decimal  @db.Decimal(12, 2)
   actualBudget   Decimal  @db.Decimal(12, 2)
-  status         String
+  status         CampaignStatus @default(DRAFT)
   objective      String
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  // Relation LANCER (1,1 côté Campaign : chaque campagne a un unique lanceur / 0,N côté User)
-  launchedById String
-  launchedBy   User   @relation(fields: [launchedById], references: [id])
+  launchedById   String
+  launchedBy     User     @relation(fields: [launchedById], references: [id])
 
-  // Relation COMPORTER (1,N côté Campaign : une campagne comporte 1..N canaux)
-  channels AdvertisingChannel[]
-
-  // Relation PLANIFIER (1,N côté Campaign : une campagne planifie 1..N diffusions)
-  broadcasts Broadcast[]
-
-  // Relation OUVRIR (0,N côté Campaign : une campagne peut ouvrir 0..N prestations terrain)
-  installations Installation[]
-
-  // Relation GENERER_STAT (1,N côté Campaign : une campagne génère 1..N statistiques)
-  statistics Statistic[]
+  channels       AdvertisingChannel[]
+  broadcasts     Broadcast[]
+  installations  Installation[]
+  statistics     Statistic[]
 
   @@index([launchedById])
 }

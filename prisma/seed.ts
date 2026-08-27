@@ -26,7 +26,7 @@
  */
 
 import 'dotenv/config';
-import { PrismaClient, Role } from '@prisma/client';
+import { PrismaClient, Role, CampaignStatus } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 
 const prisma = new PrismaClient();
@@ -149,7 +149,7 @@ async function main() {
       endDate: new Date('2026-09-30T23:59:59.000Z'),
       plannedBudget: 1_500_000,
       actualBudget: 0,
-      status: 'PLANIFIEE',
+      status: CampaignStatus.PLANNED,
       objective: 'Accroître la notoriété du produit Demo à Douala',
       launchedById: marketingManager.id,
     },
