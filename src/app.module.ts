@@ -16,6 +16,7 @@ import { RedisModule } from './modules/redis/redis.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { EntreprisesModule } from './modules/entreprises/entreprises.module';
 import { UsersModule } from './modules/users/users.module';
+import { CampagnesModule } from './modules/campagnes/campagnes.module';
 import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
 import { RolesGuard } from './modules/auth/guards/roles.guard';
 import { RequestIdMiddleware } from './common/middleware/request-id.middleware';
@@ -35,6 +36,7 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
     AuthModule,
     EntreprisesModule,
     UsersModule,
+    CampagnesModule,
   ],
   controllers: [AppController],
   providers: [
