@@ -21,6 +21,7 @@ import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
 import { RolesGuard } from './modules/auth/guards/roles.guard';
 import { RequestIdMiddleware } from './common/middleware/request-id.middleware';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
+import { CanauxModule } from './modules/canaux/canaux.module';
 
 @Module({
   imports: [
@@ -37,6 +38,7 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
     EntreprisesModule,
     UsersModule,
     CampagnesModule,
+    CanauxModule,
   ],
   controllers: [AppController],
   providers: [
