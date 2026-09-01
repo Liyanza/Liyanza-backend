@@ -23,6 +23,7 @@ import { RequestIdMiddleware } from './common/middleware/request-id.middleware';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { CanauxModule } from './modules/canaux/canaux.module';
 import { DiffusionsModule } from './modules/diffusions/diffusions.module';
+import { PrestationsModule } from './modules/prestations/prestations.module';
 
 @Module({
   imports: [
@@ -41,6 +42,7 @@ import { DiffusionsModule } from './modules/diffusions/diffusions.module';
     CampagnesModule,
     CanauxModule,
     DiffusionsModule,
+    PrestationsModule,
   ],
   controllers: [AppController],
   providers: [
