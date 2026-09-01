@@ -24,6 +24,7 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { CanauxModule } from './modules/canaux/canaux.module';
 import { DiffusionsModule } from './modules/diffusions/diffusions.module';
 import { PrestationsModule } from './modules/prestations/prestations.module';
+import { StatistiquesModule } from './modules/statistiques/statistiques.module';
 
 @Module({
   imports: [
@@ -43,6 +44,7 @@ import { PrestationsModule } from './modules/prestations/prestations.module';
     CanauxModule,
     DiffusionsModule,
     PrestationsModule,
+    StatistiquesModule,
   ],
   controllers: [AppController],
   providers: [
