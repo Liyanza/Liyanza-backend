@@ -25,6 +25,13 @@ enum CampaignStatus {
   CANCELLED
 }
 
+enum BroadcastStatus {
+  PLANNED
+  BROADCASTED
+  MISSED
+  CANCELLED
+}
+
 /// Entité ENTREPRISE du MCD — racine du multi-tenant.
 model Company {
   id             String   @id @default(cuid())
@@ -110,25 +117,21 @@ model AdvertisingChannel {
   @@index([campaignId])
 }
 
-/// Entité DIFFUSION du MCD.
 model Broadcast {
   id             String   @id @default(cuid())
-  mediaType      String   // typeMedia
-  scheduledAt    DateTime // dateHeureDiffusion (heure prévue)
-  /// Durée en secondes.
+  mediaType      String
+  scheduledAt    DateTime // dateHeureDiffusion prévue
+  actualBroadcastAt DateTime? // dateHeureDiffusion réelle (ajout)
   duration       Int
-  status         String   // statutDiffusion
-  audioProof     String?  // preuveAudio (URL/chemin de l'enregistrement de preuve)
+  status         BroadcastStatus @default(PLANNED) // utilisation de l'enum
+  audioProof     String?  // preuveAudio
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  // Relation PLANIFIER (1,1 côté Broadcast : une diffusion appartient à une seule campagne)
-  campaignId String
-  campaign   Campaign @relation(fields: [campaignId], references: [id])
-
-  // Relation REPARTIR (1,1 côté Broadcast : une diffusion est répartie sur un seul canal)
-  channelId String
-  channel   AdvertisingChannel @relation(fields: [channelId], references: [id])
+  campaignId     String
+  campaign       Campaign @relation(fields: [campaignId], references: [id])
+  channelId      String
+  channel        AdvertisingChannel @relation(fields: [channelId], references: [id])
 
   @@index([campaignId])
   @@index([channelId])

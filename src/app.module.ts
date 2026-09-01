@@ -22,6 +22,7 @@ import { RolesGuard } from './modules/auth/guards/roles.guard';
 import { RequestIdMiddleware } from './common/middleware/request-id.middleware';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { CanauxModule } from './modules/canaux/canaux.module';
+import { DiffusionsModule } from './modules/diffusions/diffusions.module';
 
 @Module({
   imports: [
@@ -39,6 +40,7 @@ import { CanauxModule } from './modules/canaux/canaux.module';
     UsersModule,
     CampagnesModule,
     CanauxModule,
+    DiffusionsModule,
   ],
   controllers: [AppController],
   providers: [
