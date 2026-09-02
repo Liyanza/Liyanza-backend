@@ -54,6 +54,18 @@ export class EnvironmentVariables {
   @IsDefined()
   @IsString()
   CORS_ORIGINS!: string;
+
+  @IsDefined()
+  @IsString()
+  JWT_VALIDATION_SECRET!: string;
+
+  @IsOptional()
+  @IsString()
+  JWT_VALIDATION_EXPIRATION?: string;
+
+  @IsDefined()
+  @IsUrl({ require_tld: false, protocols: ['http', 'https'] })
+  VALIDATION_BASE_URL!: string;
 }
 
 export function validate(config: Record<string, unknown>) {
