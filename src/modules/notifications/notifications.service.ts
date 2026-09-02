@@ -39,11 +39,10 @@ export class NotificationsService {
       where.readStatus = query.readStatus;
     }
 
-    // Pagination : si offset est fourni, on l'utilise directement.
-    // Sinon, on calcule le skip à partir de page et limit.
+    // Pagination : use offset if provided, otherwise compute skip from page and limit
     const limit = query.limit ?? 20;
-    const skip =
-      query.offset !== undefined ? query.offset : (query.page - 1) * limit;
+    const page = query.page ?? 1;
+    const skip = query.offset !== undefined ? query.offset : (page - 1) * limit;
 
     const [items, total] = await Promise.all([
       this.prisma.notification.findMany({
@@ -58,7 +57,7 @@ export class NotificationsService {
     return {
       items,
       total,
-      page: query.page ?? 1,
+      page,
       limit,
       totalPages: Math.ceil(total / limit),
     };

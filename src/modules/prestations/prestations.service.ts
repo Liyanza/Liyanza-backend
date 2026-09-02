@@ -4,6 +4,7 @@ import {
   ForbiddenException,
   BadRequestException,
   ConflictException,
+  InternalServerErrorException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
@@ -11,11 +12,19 @@ import { assertSameCompany } from '../auth/utils/company-scope.util';
 import { CreatePrestationDto } from './dto/create-prestation.dto';
 import { SoumettrePreuveDto } from './dto/soumettre-preuve.dto';
 import { UpdateStatusDto } from './dto/update-status.dto';
+import { ValidationLinkResponseDto } from './dto/validation-link-response.dto';
+import { JwtService } from '@nestjs/jwt';
+import { ConfigService } from '@nestjs/config';
+import { parseDuration } from '../../common/utils/duration.util';
 import { CampaignStatus, Role } from '@prisma/client';
 
 @Injectable()
 export class PrestationsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private jwtService: JwtService,
+    private configService: ConfigService,
+  ) {}
 
   private validateCoordinates(lat: number, lng: number): void {
     if (lat < -90 || lat > 90) {
@@ -176,7 +185,6 @@ export class PrestationsService {
       'Installation',
     );
 
-    // Fixed type check: explicit comparison instead of includes
     if (user.role !== Role.ADMIN && user.role !== Role.MARKETING_MANAGER) {
       throw new ForbiddenException('Insufficient role to update status.');
     }
@@ -228,5 +236,59 @@ export class PrestationsService {
     );
 
     return installation.statusHistory;
+  }
+
+  async generateValidationLink(
+    installationId: string,
+    user: AuthenticatedUser,
+  ) {
+    // Fetch installation with proof and campaign
+    const installation = await this.prisma.installation.findUnique({
+      where: { id: installationId },
+      include: {
+        campaign: { include: { launchedBy: true } },
+        proof: true,
+      },
+    });
+    if (!installation) {
+      throw new NotFoundException('Installation not found.');
+    }
+    assertSameCompany(
+      user,
+      installation.campaign.launchedBy.companyId,
+      'Installation',
+    );
+
+    // Ensure a proof exists
+    if (!installation.proof) {
+      throw new BadRequestException(
+        'No proof associated with this installation. Cannot generate a validation link.',
+      );
+    }
+
+    // Generate token
+    const payload = { sub: installationId, type: 'validation' };
+    const expiresIn =
+      this.configService.get<string>('jwt.validationExpiration') ?? '7d';
+    const token = this.jwtService.sign(payload);
+
+    // Calculate expiration date
+    const seconds = parseDuration(expiresIn);
+    const expiresAt = new Date(Date.now() + seconds * 1000);
+
+    // Build link
+    const baseUrl = this.configService.get<string>('VALIDATION_BASE_URL');
+    if (!baseUrl) {
+      throw new InternalServerErrorException(
+        'Validation base URL not configured.',
+      );
+    }
+    const link = `${baseUrl}/${token}`;
+
+    return new ValidationLinkResponseDto({
+      link,
+      token,
+      expiresAt: expiresAt.toISOString(),
+    });
   }
 }
