@@ -10,10 +10,15 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { CreateSubAccountDto } from './dto/create-sub-account.dto';
 import { Role } from '@prisma/client';
+import { NotificationsService } from '../notifications/notifications.service';
+import { NotificationType } from '../notifications/dto/create-notification.dto';
 
 @Injectable()
 export class UsersService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private notificationsService: NotificationsService,
+  ) {}
 
   private generateTemporaryPassword(): string {
     return randomBytes(8).toString('hex');
@@ -46,6 +51,14 @@ export class UsersService {
         role: dto.role,
         companyId: admin.companyId,
       },
+    });
+
+    // Create a notification for the admin (Phase 3 will handle actual sending)
+    await this.notificationsService.creer({
+      title: 'Sous-compte créé',
+      message: `Un nouveau sous-compte a été créé pour ${user.email} (${dto.role}).`,
+      type: NotificationType.INFO,
+      recipientId: admin.userId,
     });
 
     // TODO: send temporary password via Notification module (Phase 3)

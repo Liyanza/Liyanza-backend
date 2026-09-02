@@ -26,6 +26,7 @@ import { DiffusionsModule } from './modules/diffusions/diffusions.module';
 import { PrestationsModule } from './modules/prestations/prestations.module';
 import { StatistiquesModule } from './modules/statistiques/statistiques.module';
 import { AssistantIAModule } from './modules/assistant-ia/assistant-ia.module';
+import { NotificationsModule } from './modules/notifications/notifications.module';
 
 @Module({
   imports: [
@@ -47,6 +48,7 @@ import { AssistantIAModule } from './modules/assistant-ia/assistant-ia.module';
     PrestationsModule,
     StatistiquesModule,
     AssistantIAModule,
+    NotificationsModule,
   ],
   controllers: [AppController],
   providers: [
