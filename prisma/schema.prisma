@@ -6,10 +6,7 @@ datasource db {
   provider = "postgresql"
 }
 
-/// Rôles applicatifs, alignés sur le besoin "sous-comptes & permissions" du cadrage.
-/// Liste initiale à valider avec le PO — de nouvelles valeurs pourront être ajoutées
-/// via une simple migration additive (ALTER TYPE ... ADD VALUE), sans réécriture
-/// de données ni migration lourde.
+/// Rôles applicatifs
 enum Role {
   ADMIN
   MARKETING_MANAGER
@@ -32,7 +29,7 @@ enum BroadcastStatus {
   CANCELLED
 }
 
-/// Entité ENTREPRISE du MCD — racine du multi-tenant.
+/// Entité ENTREPRISE – racine du multi-tenant.
 model Company {
   id             String   @id @default(cuid())
   name           String
@@ -42,11 +39,12 @@ model Company {
   updatedAt      DateTime @updatedAt
   deletedAt      DateTime? 
 
-  // Relation APPARTENIR_ENTREPRISE (côté 0,N : une entreprise a 0..N utilisateurs)
-  users User[]
+  users          User[]
+  aiConversations AiConversation[] // ← nouvelle relation inverse
+  recommendations Recommendation[] // ← nouvelle relation inverse
 }
 
-/// Entité UTILISATEUR du MCD.
+/// Entité UTILISATEUR
 model User {
   id        String   @id @default(cuid())
   firstName String
@@ -61,10 +59,10 @@ model User {
   companyId String?
   company   Company? @relation(fields: [companyId], references: [id])
 
-  // Back-relations ajoutées par BACK-103 / BACK-104
-  campaigns     Campaign[]     // LANCER : campagnes lancées par cet utilisateur
-  installations Installation[] // REALISER : prestations terrain réalisées par ce prestataire
-  notifications Notification[] // RECEVOIR : notifications reçues par cet utilisateur
+  campaigns     Campaign[]
+  installations Installation[]
+  notifications Notification[]
+  aiConversationsCreated AiConversation[] // ← nouvelle relation inverse (créateur)
 
   @@index([companyId])
 }
@@ -92,26 +90,21 @@ model Campaign {
   broadcasts     Broadcast[]
   installations  Installation[]
   statistics     Statistic[]
+  recommendations Recommendation[] // ← nouvelle relation inverse
 
   @@index([launchedById])
 }
 
-/// Entité CANAUX_PUBLICITAIRE du MCD.
-/// NB : le MCD fourni (OCR, sans tracé des liens visibles) ne permet pas de déterminer
-/// avec certitude le sens de COMPORTER. On retient ici l'interprétation la plus cohérente
-/// avec le use case "Choisir les canaux de diffusion" (une campagne choisit plusieurs
-/// canaux) : Campaign 1 --- N AdvertisingChannel. À reconfirmer en revue de schéma.
+/// Entité CANAUX_PUBLICITAIRE
 model AdvertisingChannel {
   id        String  @id @default(cuid())
   radio     Boolean
-  poster    Boolean // affichePub
+  poster    Boolean
   flyer     Boolean
 
-  // Relation COMPORTER (1,1 côté AdvertisingChannel : un canal appartient à une seule campagne)
   campaignId String
   campaign   Campaign @relation(fields: [campaignId], references: [id])
 
-  // Relation REPARTIR (1,N côté AdvertisingChannel : un canal peut être réparti sur 1..N diffusions)
   broadcasts Broadcast[]
 
   @@index([campaignId])
@@ -120,11 +113,11 @@ model AdvertisingChannel {
 model Broadcast {
   id             String   @id @default(cuid())
   mediaType      String
-  scheduledAt    DateTime // dateHeureDiffusion prévue
-  actualBroadcastAt DateTime? // dateHeureDiffusion réelle (ajout)
+  scheduledAt    DateTime
+  actualBroadcastAt DateTime?
   duration       Int
-  status         BroadcastStatus @default(PLANNED) // utilisation de l'enum
-  audioProof     String?  // preuveAudio
+  status         BroadcastStatus @default(PLANNED)
+  audioProof     String?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
@@ -141,59 +134,49 @@ model Broadcast {
 // BACK-104 — Terrain, Preuves, IA & Notifications
 // =====================================================================
 
-/// Entité PRESTATION du MCD (tâche terrain : installation d'un support publicitaire).
 model Installation {
   id                      String   @id @default(cuid())
-  location                String   // emplacement
-  plannedLatitude         Float    // latitudePrevue
-  plannedLongitude        Float    // longitudePrevue
-  plannedInstallationDate DateTime // dateInstallationPrevue
+  location                String
+  plannedLatitude         Float
+  plannedLongitude        Float
+  plannedInstallationDate DateTime
   status                  String
   createdAt               DateTime @default(now())
   updatedAt               DateTime @updatedAt
 
-  // Relation OUVRIR (1,1 côté Installation : une prestation est ouverte par une seule campagne)
   campaignId String
   campaign   Campaign @relation(fields: [campaignId], references: [id])
 
-  // Relation REALISER (1,1 côté Installation : une prestation est réalisée par un seul prestataire)
   providerId String
   provider   User   @relation(fields: [providerId], references: [id])
 
-  // Relation ATTESTER (1,1 / 1,1 : une prestation a exactement une preuve de publication)
   proof PublicationProof?
-
-  // Relation SUIVRE (1,N côté Installation : une prestation a 1..N entrées d'historique)
   statusHistory StatusHistory[]
 
   @@index([campaignId])
   @@index([providerId])
 }
 
-/// Entité PREUVE_PUBLICATION du MCD.
 model PublicationProof {
   id               String   @id @default(cuid())
-  photo            String   // URL/chemin de la photo
+  photo            String
   latitude         Float
   longitude        Float
-  takenAt          DateTime // dateHeurePrise
-  validationStatus String   // statutValidation
+  takenAt          DateTime
+  validationStatus String
   createdAt        DateTime @default(now())
 
-  // Relation ATTESTER (1,1 côté PublicationProof : une preuve atteste une seule prestation)
-  installationId String       @unique
+  installationId String @unique
   installation   Installation @relation(fields: [installationId], references: [id])
 }
 
-/// Entité HISTORIQUE_STATUT du MCD.
 model StatusHistory {
   id            String   @id @default(cuid())
-  previousStatus String  // ancienStatut
-  newStatus      String  // nouveauStatut
-  changedAt      DateTime // dateChangement
-  comment        String?  // commentaire
+  previousStatus String
+  newStatus      String
+  changedAt      DateTime
+  comment        String?
 
-  // Relation SUIVRE (1,1 côté StatusHistory : une entrée d'historique appartient à une seule prestation)
   installationId String
   installation   Installation @relation(fields: [installationId], references: [id])
 
@@ -201,55 +184,41 @@ model StatusHistory {
   @@index([changedAt])
 }
 
-/// Entité SIMULATION du MCD.
-/// NB : le MCD fourni ne relie explicitement Simulation qu'à Questionnaire (REPOSE_SUR).
-/// Aucun lien vers Campaign/User n'est spécifié dans les relations transmises — à valider
-/// avec le PO si une simulation doit être rattachée à un utilisateur/une entreprise.
+/// Entité SIMULATION
 model Simulation {
   id               String   @id @default(cuid())
-  estimatedBudget  Decimal  @db.Decimal(12, 2) // budgetEstime
-  expectedResults  String   @db.Text            // resultatsPrevus
-  simulatedAt      DateTime                     // dateSimulation
-  /// Paramètres structurés de la simulation (JSON) — choix technique à valider en revue.
-  parameters       Json                         // parametres
+  estimatedBudget  Decimal  @db.Decimal(12, 2)
+  expectedResults  String   @db.Text
+  simulatedAt      DateTime
+  parameters       Json
 
-  // Relation REPOSE_SUR (1,1 / 1,1 : une simulation repose sur exactement un questionnaire)
-  questionnaireId String     @unique
+  questionnaireId String @unique
   questionnaire   Questionnaire @relation(fields: [questionnaireId], references: [id])
 }
 
-/// Entité QUESTIONNAIRE_SIMULATION du MCD.
 model Questionnaire {
   id            String   @id @default(cuid())
-  completedAt   DateTime // dateRealisation
+  completedAt   DateTime
 
-  // Relation REPOSE_SUR — back-relation optionnelle vers la simulation générée
   simulation Simulation?
-
-  // Relation CONTENIR (1,N côté Questionnaire : un questionnaire contient 1..N réponses)
   answers SimulationAnswer[]
 }
 
-/// Entité QUESTION du MCD (catalogue de questions réutilisables).
 model Question {
   id        String @id @default(cuid())
-  label     String // libelle
-  fieldType String // typeChamp
+  label     String
+  fieldType String
 
   answers SimulationAnswer[]
 }
 
-/// Entité-association CONTENU du MCD (réification du lien N,N Questionnaire ↔ Question,
-/// portant l'attribut valeurReponse).
 model SimulationAnswer {
   id    String @id @default(cuid())
-  value String // valeurReponse
+  value String
 
-  // Relation CONTENIR (1,1 côté SimulationAnswer : une réponse appartient à un seul questionnaire)
   questionnaireId String
   questionnaire   Questionnaire @relation(fields: [questionnaireId], references: [id])
 
-  // Relation CONTENU (1,1 côté SimulationAnswer : une réponse répond à une seule question)
   questionId String
   question   Question @relation(fields: [questionId], references: [id])
 
@@ -257,57 +226,60 @@ model SimulationAnswer {
   @@index([questionId])
 }
 
-/// Entité CONVERSATION_IA du MCD.
-/// NB : aucune relation vers Utilisateur n'est listée dans les relations BACK-104 fournies
-/// (seules ENGENDRER, ISSUE_DE, GENERER_STAT sont demandées) — à valider avec le PO si
-/// une conversation doit être rattachée à son auteur.
+/// Entité CONVERSATION_IA
 model AiConversation {
-  id        String   @id @default(cuid())
-  startedAt DateTime // dateDebut
-  topic     String   // sujet
+  id          String   @id @default(cuid())
+  startedAt   DateTime
+  topic       String
+  companyId   String?
+  createdById String?
 
-  // Relation ENGENDRER (1,N côté AiConversation : une conversation engendre 1..N messages)
-  messages AiMessage[]
+  company     Company?  @relation(fields: [companyId], references: [id])
+  createdBy   User?     @relation(fields: [createdById], references: [id])
+
+  messages    AiMessage[]
 }
 
-/// Entité MESSAGE_IA du MCD.
+/// Entité MESSAGE_IA
 model AiMessage {
   id        String   @id @default(cuid())
-  content   String   @db.Text // contenu — texte libre, jamais de Varchar limité
-  sender    String   // expediteur
-  sentAt    DateTime // dateEnvoi
+  content   String   @db.Text
+  sender    String
+  sentAt    DateTime
 
-  // Relation ENGENDRER (1,1 côté AiMessage : un message appartient à une seule conversation)
   conversationId String
   conversation   AiConversation @relation(fields: [conversationId], references: [id])
 
-  // Relation ISSUE_DE (0,1 / 0,1 : un message peut être à l'origine d'au plus une recommandation)
   recommendation Recommendation?
 
   @@index([conversationId])
   @@index([sentAt])
 }
 
-/// Entité RECOMMANDATION du MCD.
+/// Entité RECOMMANDATION
 model Recommendation {
   id          String   @id @default(cuid())
-  content     String   @db.Text // contenu — texte libre, jamais de Varchar limité
-  priority    String   // priorite
-  generatedAt DateTime // dateGeneration
+  content     String   @db.Text
+  priority    String
+  generatedAt DateTime
 
-  // Relation ISSUE_DE (0,1 côté Recommendation : optionnellement issue d'un message IA)
-  sourceMessageId String?    @unique
+  sourceMessageId String? @unique
   sourceMessage   AiMessage? @relation(fields: [sourceMessageId], references: [id])
+
+  campaignId  String
+  companyId   String?
+
+  campaign    Campaign @relation(fields: [campaignId], references: [id])
+  company     Company? @relation(fields: [companyId], references: [id])
 }
 
-/// Entité STATISTIQUE du MCD.
+/// Entité STATISTIQUE
 model Statistic {
   id         String   @id @default(cuid())
-  indicator  String   // indicateur
-  value      Float    // valeur
-  computedAt DateTime // dateCalcul
+  indicator  String
+  value      Float
+  computedAt DateTime
 
-  // Relation GENERER_STAT (1,1 côté Statistic : une statistique est générée par une seule campagne)
   campaignId String
   campaign   Campaign @relation(fields: [campaignId], references: [id])
 
@@ -315,16 +287,15 @@ model Statistic {
   @@index([computedAt])
 }
 
-/// Entité NOTIFICATION du MCD.
+/// Entité NOTIFICATION
 model Notification {
   id          String   @id @default(cuid())
-  title       String   // titre
+  title       String
   message     String   @db.Text
   type        String
-  sentAt      DateTime // dateEnvoi
-  readStatus  String   // statutLecture
+  sentAt      DateTime
+  readStatus  String
 
-  // Relation RECEVOIR (1,1 côté Notification : une notification a un seul destinataire)
   recipientId String
   recipient   User   @relation(fields: [recipientId], references: [id])
 
