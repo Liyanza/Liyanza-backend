@@ -97,6 +97,8 @@ elle reflète l'intention fonctionnelle actuelle du cadrage.
 | Générer / exporter des rapports                                     |   ✅    |         ✅          |         ❌          |     ❌     |
 | Utiliser l'assistant IA marketing                                   |   ✅    |         ✅          |         ✅          |     ❌     |
 | Analyser les performances / recommandations / ROI                   |   ✅    |         ✅          |         ❌          |     ❌     |
+| **Consulter ses propres notifications**                             |   ✅    |         ✅          |         ✅          |     ✅     |
+| **Marquer une notification comme lue**                              |   ✅    |         ✅          |         ✅          |     ✅     |
 
 **Utilisation dans le code :**
 
