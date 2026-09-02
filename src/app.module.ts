@@ -25,6 +25,7 @@ import { CanauxModule } from './modules/canaux/canaux.module';
 import { DiffusionsModule } from './modules/diffusions/diffusions.module';
 import { PrestationsModule } from './modules/prestations/prestations.module';
 import { StatistiquesModule } from './modules/statistiques/statistiques.module';
+import { AssistantIAModule } from './modules/assistant-ia/assistant-ia.module';
 
 @Module({
   imports: [
@@ -45,6 +46,7 @@ import { StatistiquesModule } from './modules/statistiques/statistiques.module';
     DiffusionsModule,
     PrestationsModule,
     StatistiquesModule,
+    AssistantIAModule,
   ],
   controllers: [AppController],
   providers: [
