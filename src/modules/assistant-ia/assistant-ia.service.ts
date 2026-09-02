@@ -63,11 +63,7 @@ export class AssistantIService {
     // when the generated Prisma Client is out of sync with schema.prisma
     // (run `npx prisma generate` + restart the TS server, then this cast
     // can be removed since `companyId` will be properly typed again).
-    assertSameCompany(
-      user,
-      conversation.companyId as string | null,
-      'Conversation',
-    );
+    assertSameCompany(user, conversation.companyId, 'Conversation');
 
     // Call IA engine
     let iaResponse: string;
@@ -131,11 +127,7 @@ export class AssistantIService {
     if (!conversation) {
       throw new NotFoundException('Conversation not found.');
     }
-    assertSameCompany(
-      user,
-      conversation.companyId as string | null,
-      'Conversation',
-    );
+    assertSameCompany(user, conversation.companyId, 'Conversation');
     return conversation;
   }
 

@@ -84,7 +84,7 @@ describe('AssistantIService', () => {
     }).compile();
 
     service = module.get<AssistantIService>(AssistantIService);
-    prisma = module.get(PrismaService) as MockedPrisma;
+    prisma = module.get(PrismaService);
     iaEngine = module.get(IA_ENGINE_TOKEN);
   });
 

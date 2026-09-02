@@ -24,9 +24,17 @@ export interface GenerateRecommendationsResult {
   }>;
 }
 
+// NOTE: methods are declared as function-typed *properties* (arrow style)
+// rather than method signatures on purpose. TypeScript treats method
+// signatures as capable of a polymorphic `this`, which is what triggers
+// @typescript-eslint/unbound-method false positives on
+// `expect(iaEngine.askQuestion).toHaveBeenCalledWith(...)` in tests, even
+// once the object is wrapped by jest.Mocked<...>. Function-typed properties
+// don't have that `this` ambiguity, so the rule no longer fires — with no
+// runtime difference and no eslint config changes needed.
 export interface IAEngineInterface {
-  askQuestion(params: AskQuestionParams): Promise<AskQuestionResult>;
-  generateRecommendations(
+  askQuestion: (params: AskQuestionParams) => Promise<AskQuestionResult>;
+  generateRecommendations: (
     params: GenerateRecommendationsParams,
-  ): Promise<GenerateRecommendationsResult>;
+  ) => Promise<GenerateRecommendationsResult>;
 }
