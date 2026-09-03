@@ -114,3 +114,16 @@ mot de passe faible ou devinable), même si leur usage reste local.
 > ⚠️ **Le script refuse de s'exécuter si `NODE_ENV=production`** — c'est la
 > garde principale empêchant toute fuite de données de seed vers un
 > environnement réel. Ne contournez jamais cette vérification.
+
+## 📦 Files d’attente (BullMQ)
+
+Le backend utilise **BullMQ** sur Redis pour gérer les traitements asynchrones. Les files suivantes sont disponibles :
+
+- `notifications` : envoi d’emails, push, etc.
+- `ia-simulation` : simulation de campagne (appel au microservice IA)
+- `monitoring-radio` : traitement des détections audio
+- `qr-code-scan` : enregistrement des scans de QR code
+
+### Tableau de bord d’administration
+
+Un tableau de bord de surveillance est accessible à l’adresse `/admin/queues` (réservé aux utilisateurs avec le rôle `ADMIN`). Il permet de visualiser l’état des files, les jobs en attente, actifs, terminés et en échec.

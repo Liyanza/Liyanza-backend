@@ -97,8 +97,9 @@ elle reflète l'intention fonctionnelle actuelle du cadrage.
 | Générer / exporter des rapports                                     |   ✅    |         ✅          |         ❌          |     ❌     |
 | Utiliser l'assistant IA marketing                                   |   ✅    |         ✅          |         ✅          |     ❌     |
 | Analyser les performances / recommandations / ROI                   |   ✅    |         ✅          |         ❌          |     ❌     |
-| **Consulter ses propres notifications**                             |   ✅    |         ✅          |         ✅          |     ✅     |
-| **Marquer une notification comme lue**                              |   ✅    |         ✅          |         ✅          |     ✅     |
+| Consulter ses propres notifications                                 |   ✅    |         ✅          |         ✅          |     ✅     |
+| Marquer une notification comme lue                                  |   ✅    |         ✅          |         ✅          |     ✅     |
+| Accéder au dashboard BullMQ (/admin/queues)                         |   ✅    |         ❌          |         ❌          |     ❌     |
 
 **Utilisation dans le code :**
 
