@@ -27,6 +27,7 @@ import { PrestationsModule } from './modules/prestations/prestations.module';
 import { StatistiquesModule } from './modules/statistiques/statistiques.module';
 import { AssistantIAModule } from './modules/assistant-ia/assistant-ia.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
+import { QueueModule } from './modules/queue/queue.module';
 
 @Module({
   imports: [
@@ -49,6 +50,7 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
     StatistiquesModule,
     AssistantIAModule,
     NotificationsModule,
+    QueueModule,
   ],
   controllers: [AppController],
   providers: [
