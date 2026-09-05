@@ -33,4 +33,6 @@ COPY --from=builder --chown=nodejs:nodejs /app/prisma ./prisma
 
 USER nodejs
 EXPOSE 3000
-CMD ["node", "dist/src/main"]
+
+# Lancer les migrations automatiquement puis démarrer l'API
+CMD ["sh", "-c", "npx prisma migrate deploy && node dist/src/main"]
