@@ -6,9 +6,11 @@ import { BullMQAdapter } from '@bull-board/api/bullMQAdapter';
 import { ConfigService } from '@nestjs/config';
 import { QueueService } from './queue.service';
 import { QueueAuthMiddleware } from './queue-auth.middleware';
+import { AuthModule } from '../auth/auth.module';
 
 @Module({
   imports: [
+    AuthModule,
     BullModule.forRootAsync({
       useFactory: (configService: ConfigService) => ({
         connection: { url: configService.get<string>('REDIS_URL') },
