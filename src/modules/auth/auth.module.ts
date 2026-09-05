@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
 import { Module } from '@nestjs/common';
-import { JwtModule, JwtService } from '@nestjs/jwt';
+import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { AuthController } from './auth.controller';
@@ -42,7 +42,7 @@ import { RedisModule } from '../redis/redis.module';
     JwtAuthGuard,
     RolesGuard,
     CompanyScopeGuard,
-    JwtService,
+    JwtModule,
   ],
 })
 export class AuthModule {}
