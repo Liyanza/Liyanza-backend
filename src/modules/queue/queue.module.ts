@@ -1,4 +1,9 @@
-import { Module, MiddlewareConsumer, NestModule } from '@nestjs/common';
+import {
+  Module,
+  MiddlewareConsumer,
+  NestModule,
+  RequestMethod,
+} from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
 import { BullBoardModule } from '@bull-board/nestjs';
 import { ExpressAdapter } from '@bull-board/express';
@@ -45,6 +50,14 @@ import { AuthModule } from '../auth/auth.module';
 })
 export class QueueModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
-    consumer.apply(QueueAuthMiddleware).forRoutes('admin/queues*');
+    // ✅ Correction : utiliser des objets path + method ou une regex
+    consumer
+      .apply(QueueAuthMiddleware)
+      .forRoutes(
+        { path: 'admin/queues', method: RequestMethod.ALL },
+        { path: 'admin/queues/*', method: RequestMethod.ALL },
+      );
+    // Alternative avec une regex :
+    // consumer.apply(QueueAuthMiddleware).forRoutes(/^\/admin\/queues\/?.*/);
   }
 }
