@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
 import { Module } from '@nestjs/common';
-import { JwtModule } from '@nestjs/jwt';
+import { JwtModule, JwtService } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { AuthController } from './auth.controller';
@@ -37,10 +37,12 @@ import { RedisModule } from '../redis/redis.module';
     RolesGuard,
     CompanyScopeGuard,
   ],
-  // JwtAuthGuard/RolesGuard sont aussi enregistrés globalement (APP_GUARD dans
-  // AppModule) ; on les exporte ici pour que les modules métier des phases
-  // suivantes puissent réutiliser CompanyScopeGuard (et au besoin surcharger
-  // localement) sans jamais dupliquer la logique RBAC/ownership.
-  exports: [AuthService, JwtAuthGuard, RolesGuard, CompanyScopeGuard],
+  exports: [
+    AuthService,
+    JwtAuthGuard,
+    RolesGuard,
+    CompanyScopeGuard,
+    JwtService,
+  ],
 })
 export class AuthModule {}
