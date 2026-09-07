@@ -3,13 +3,14 @@ import {
   NotFoundException,
   ForbiddenException,
   BadRequestException,
+  ConflictException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { CreateCampagneDto } from './dto/create-campagne.dto';
 import { UpdateCampagneDto } from './dto/update-campagne.dto';
 import { LancerCampagneDto } from './dto/lancer-campagne.dto';
-import { CampaignStatus } from '@prisma/client';
+import { CampaignStatus, Prisma, Campaign } from '@prisma/client';
 import { CampaignStateMachine } from './state/campaign-state-machine';
 
 @Injectable()
@@ -66,7 +67,7 @@ export class CampagnesService {
     }
 
     const skip = (page - 1) * limit;
-    const where: any = {
+    const where: Prisma.CampaignWhereInput = {
       launchedBy: {
         companyId: user.companyId,
       },
@@ -169,7 +170,7 @@ export class CampagnesService {
     }
 
     // Prepare update data
-    const updateData: any = {};
+    const updateData: Prisma.CampaignUpdateInput = {};
     if (dto.name) updateData.name = dto.name;
     if (dto.objective) updateData.objective = dto.objective;
     if (dto.plannedBudget !== undefined) {
@@ -193,10 +194,25 @@ export class CampagnesService {
       updateData.endDate = endDate;
     }
 
-    return this.prisma.campaign.update({
-      where: { id },
+    // CORRECTIF AUDIT (mineur — race condition / TOCTOU) : la lecture
+    // (`findFirst`) et l'écriture (`update`) étaient séparées sans verrou.
+    // Deux requêtes concurrentes pouvaient toutes deux passer la validation
+    // "status === DRAFT" avant qu'aucune n'ait écrit. On utilise désormais
+    // un verrou optimiste : `updateMany` ne modifie la ligne QUE si son
+    // statut est toujours DRAFT au moment de l'écriture ; sinon `count`
+    // vaut 0 et on renvoie une erreur explicite plutôt qu'un résultat
+    // silencieusement incohérent.
+    const result = await this.prisma.campaign.updateMany({
+      where: { id, status: CampaignStatus.DRAFT },
       data: updateData,
     });
+    if (result.count === 0) {
+      throw new ConflictException(
+        'Le statut de la campagne a changé entre-temps, veuillez réessayer.',
+      );
+    }
+
+    return this.prisma.campaign.findUniqueOrThrow({ where: { id } });
   }
 
   /**
@@ -234,10 +250,20 @@ export class CampagnesService {
     }
 
     // Perform the update
-    return this.prisma.campaign.update({
-      where: { id },
+    // CORRECTIF AUDIT (mineur — race condition / TOCTOU) : même principe
+    // que dans `update()` — on ne transitionne que si le statut lu est
+    // toujours celui observé au moment de la validation.
+    const result = await this.prisma.campaign.updateMany({
+      where: { id, status: campaign.status },
       data: { status: dto.status },
     });
+    if (result.count === 0) {
+      throw new ConflictException(
+        'Le statut de la campagne a changé entre-temps, veuillez réessayer.',
+      );
+    }
+
+    return this.prisma.campaign.findUniqueOrThrow({ where: { id } });
   }
 
   /**
@@ -252,7 +278,7 @@ export class CampagnesService {
   /**
    * Validate that a campaign has all required fields before transitioning to PLANNED.
    */
-  private validateCampaignComplete(campaign: any): void {
+  private validateCampaignComplete(campaign: Campaign): void {
     if (!campaign.name) {
       throw new BadRequestException('Campaign name is required.');
     }

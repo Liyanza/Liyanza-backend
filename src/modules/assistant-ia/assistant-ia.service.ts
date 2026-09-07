@@ -80,13 +80,18 @@ export class AssistantIService {
       );
     }
 
-    // Persist both messages (user + IA) in a transaction.
-    // NOTE: uses the callback form of $transaction (not the array form),
-    // since the array form breaks the interactive-transaction mock in the
-    // test suite (jest.fn((callback) => callback())).
+    // Persist both messages (user + IA) atomically.
+    //
+    // CORRECTIF AUDIT (majeur) : la version précédente appelait
+    // `this.prisma.$transaction(async () => { this.prisma.aiMessage.create(...) })`
+    // en ignorant le client transactionnel `tx` fourni par Prisma, et en
+    // réutilisant `this.prisma` (le client racine, hors transaction) à
+    // l'intérieur du callback. Résultat : aucune atomicité réelle — si la
+    // seconde écriture échouait, la première restait committée sans rollback.
+    // Le callback DOIT utiliser le client `tx` reçu en paramètre.
     const [userMessage, iaMessage] = await this.prisma.$transaction(
-      async () => {
-        const userMessage = await this.prisma.aiMessage.create({
+      async (tx) => {
+        const userMessage = await tx.aiMessage.create({
           data: {
             content: dto.content,
             sender: 'USER',
@@ -94,7 +99,7 @@ export class AssistantIService {
             conversationId: conversation.id,
           },
         });
-        const iaMessage = await this.prisma.aiMessage.create({
+        const iaMessage = await tx.aiMessage.create({
           data: {
             content: iaResponse,
             sender: 'AI',
@@ -186,12 +191,13 @@ export class AssistantIService {
       );
     }
 
-    // Persist generated recommendations (all linked to the campaign).
-    // Callback form of $transaction, same reasoning as in envoyerMessage.
-    const createdRecommendations = await this.prisma.$transaction(() =>
+    // Persist generated recommendations (all linked to the campaign)
+    // atomically — même correctif que dans `envoyerMessage` : le callback
+    // utilise le client transactionnel `tx`, jamais `this.prisma`.
+    const createdRecommendations = await this.prisma.$transaction((tx) =>
       Promise.all(
         iaResult.recommendations.map((rec) =>
-          this.prisma.recommendation.create({
+          tx.recommendation.create({
             data: {
               content: rec.content,
               priority: rec.priority,

@@ -12,12 +12,14 @@ import { CreateSubAccountDto } from './dto/create-sub-account.dto';
 import { Role } from '@prisma/client';
 import { NotificationsService } from '../notifications/notifications.service';
 import { NotificationType } from '../notifications/dto/create-notification.dto';
+import { QueueService } from '../queue/queue.service';
 
 @Injectable()
 export class UsersService {
   constructor(
     private prisma: PrismaService,
     private notificationsService: NotificationsService,
+    private queueService: QueueService,
   ) {}
 
   private generateTemporaryPassword(): string {
@@ -61,12 +63,17 @@ export class UsersService {
       recipientId: admin.userId,
     });
 
-    // TODO: send temporary password via Notification module (Phase 3)
-    if (process.env.NODE_ENV !== 'production') {
-      console.log(
-        `[UsersService] Temporary password for ${user.email}: ${plainPassword}`,
-      );
-    }
+    // CORRECTIF AUDIT (mineur) : le mot de passe temporaire ne doit plus
+    // jamais transiter par les logs applicatifs (même hors production —
+    // les logs de staging sont souvent collectés/persistés). Il est
+    // désormais transmis via la queue `notifications`, à charge pour un
+    // processor dédié (canal email/SMS) de le délivrer à l'utilisateur.
+    // Le secret ne persiste dans aucune table de la base de données.
+    await this.queueService.addJob('notifications', 'send-temporary-password', {
+      email: user.email,
+      firstName: user.firstName,
+      temporaryPassword: plainPassword,
+    });
 
     // Exclude password from the response
     const result = {

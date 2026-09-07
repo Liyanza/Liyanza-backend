@@ -31,8 +31,14 @@ export class AuthService {
 
     const saltRounds = 10;
     const hashedPassword = await bcrypt.hash(dto.password, saltRounds);
-    const role = dto.role || Role.COMMUNITY_MANAGER;
 
+    // SÉCURITÉ (correctif audit — faille critique) : le rôle et l'entreprise
+    // ne sont JAMAIS déterminés à partir du payload client. Une inscription
+    // publique crée toujours un utilisateur "orphelin" (sans entreprise) au
+    // rôle le plus bas du domaine. Le rattachement à une entreprise se fait
+    // ensuite exclusivement via `POST /entreprises` (création + auto-promotion
+    // ADMIN de la NOUVELLE entreprise) ou via une invitation d'un ADMIN déjà
+    // légitime (`UsersService.createSubAccount`).
     const user = await this.prisma.user.create({
       data: {
         email: dto.email,
@@ -40,8 +46,8 @@ export class AuthService {
         firstName: dto.firstName,
         lastName: dto.lastName,
         phone: dto.phone,
-        role,
-        companyId: dto.companyId || null,
+        role: Role.COMMUNITY_MANAGER,
+        companyId: null,
       },
     });
 

@@ -1,6 +1,7 @@
 import { Module, MiddlewareConsumer, NestModule } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_FILTER, APP_GUARD } from '@nestjs/core';
+import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { validate } from './config/env.validation';
@@ -36,6 +37,18 @@ import { QueueModule } from './modules/queue/queue.module';
       load: [appConfig, databaseConfig, jwtConfig, redisConfig, corsConfig],
       validate,
     }),
+    // SÉCURITÉ (correctif audit — majeur) : rate limiting global anti
+    // brute-force / credential stuffing. Limite par défaut : 20 requêtes /
+    // minute / IP sur l'ensemble de l'API. Des limites plus strictes sont
+    // appliquées spécifiquement sur `/auth/login`, `/auth/register` et
+    // `/auth/refresh` via `@Throttle(...)` (voir `AuthController`).
+    ThrottlerModule.forRoot([
+      {
+        name: 'default',
+        ttl: 60_000,
+        limit: 20,
+      },
+    ]),
     LoggerModule,
     HealthModule,
     PrismaModule,
@@ -59,6 +72,14 @@ import { QueueModule } from './modules/queue/queue.module';
     {
       provide: APP_FILTER,
       useClass: AllExceptionsFilter,
+    },
+    // L'ordre des APP_GUARD est important : Nest les exécute dans l'ordre
+    // de déclaration. ThrottlerGuard tourne en premier — y compris sur les
+    // routes `@Public()` (login/register), qui sont justement les cibles du
+    // brute force — puis JwtAuthGuard, puis RolesGuard.
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard,
     },
     {
       provide: APP_GUARD,

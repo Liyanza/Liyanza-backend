@@ -18,6 +18,7 @@ import { SoumettrePreuveDto } from './dto/soumettre-preuve.dto';
 import { UpdateStatusDto } from './dto/update-status.dto';
 import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { Public } from '../auth/decorators/public.decorator';
 import { ValidationLinkResponseDto } from './dto/validation-link-response.dto';
 
 interface AuthenticatedRequest extends ExpressRequest {
@@ -107,8 +108,15 @@ export class PrestationsController {
    * POST /prestations/:id/lien-validation
    * Generate an external validation link for an installation.
    * Allowed: ADMIN, MARKETING_MANAGER
+   *
+   * CORRECTIF AUDIT (majeur #5) : la route était auparavant déclarée
+   * `@Post(':id/lien-validation')`, sans le préfixe `prestations/` utilisé
+   * par tous les autres handlers de ce contrôleur (`@Controller()` n'a pas
+   * de préfixe global). Elle se retrouvait donc montée à la racine de
+   * l'API (`POST /:id/lien-validation`), au lieu de `POST
+   * /prestations/:id/lien-validation`.
    */
-  @Post(':id/lien-validation')
+  @Post('prestations/:id/lien-validation')
   @Roles(Role.ADMIN, Role.MARKETING_MANAGER)
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
@@ -120,5 +128,26 @@ export class PrestationsController {
     @Request() req: AuthenticatedRequest,
   ): Promise<ValidationLinkResponseDto> {
     return this.prestationsService.generateValidationLink(id, req.user);
+  }
+
+  /**
+   * POST /prestations/lien-validation/:token
+   *
+   * CORRECTIF AUDIT (majeur #6) : endpoint public consommant le lien de
+   * validation généré ci-dessus. Le token porte lui-même la preuve
+   * d'autorisation (signé avec un secret dédié `jwt.validationSecret`,
+   * distinct du secret d'authentification applicatif) — aucun compte
+   * utilisateur n'est requis côté publicitaire externe. La sémantique
+   * "single-use" est appliquée côté service via un `jti` suivi dans Redis.
+   */
+  @Public()
+  @Post('prestations/lien-validation/:token')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Consume a (single-use) external validation link',
+  })
+  @ApiResponse({ status: 200, description: 'Proof validated' })
+  async consumeValidationLink(@Param('token') token: string) {
+    return this.prestationsService.consumeValidationLink(token);
   }
 }

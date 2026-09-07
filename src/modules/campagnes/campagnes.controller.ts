@@ -7,8 +7,6 @@ import {
   Body,
   Request,
   Query,
-  ParseIntPipe,
-  DefaultValuePipe,
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
@@ -20,6 +18,7 @@ import { UpdateCampagneDto } from './dto/update-campagne.dto';
 import { LancerCampagneDto } from './dto/lancer-campagne.dto';
 import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
 
 interface AuthenticatedRequest extends ExpressRequest {
   user: AuthenticatedUser;
@@ -43,8 +42,7 @@ export class CampagnesController {
   @Roles(Role.ADMIN, Role.MARKETING_MANAGER)
   async findAll(
     @Request() req: AuthenticatedRequest,
-    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
-    @Query('limit', new DefaultValuePipe(10), ParseIntPipe) limit: number,
+    @Query() { page = 1, limit = 10 }: PaginationQueryDto,
     @Query('status') status?: CampaignStatus,
   ) {
     return this.campagnesService.findAll(req.user, page, limit, status);

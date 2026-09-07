@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/unbound-method */
 import { Test, TestingModule } from '@nestjs/testing';
 import { StatistiquesService } from './statistiques.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -141,6 +142,20 @@ describe('StatistiquesService', () => {
       await expect(
         service.getCampagneStatistiques('invalid', mockUser, {}),
       ).rejects.toThrow(NotFoundException);
+    });
+
+    it('should throw ForbiddenException if the user has no company (fix minor #12)', async () => {
+      // Régression : avant le correctif, un utilisateur sans companyId
+      // pouvait déclencher une requête Prisma avec `companyId: null`
+      // au lieu d'être rejeté explicitement.
+      await expect(
+        service.getCampagneStatistiques(
+          'camp-1',
+          { ...mockUser, companyId: null },
+          {},
+        ),
+      ).rejects.toThrow(ForbiddenException);
+      expect(prisma.campaign.findFirst).not.toHaveBeenCalled();
     });
   });
 });

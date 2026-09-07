@@ -34,9 +34,20 @@ type MockedPrisma = {
   $transaction: jest.Mock;
 };
 
+// Le client transactionnel `tx` passé au callback de `$transaction` doit
+// être un client DISTINCT de `this.prisma` (c'est le comportement réel de
+// Prisma). Utiliser le même mock que `prisma.aiMessage.create` aurait
+// masqué le bug historique où le service ignorait `tx` et retombait sur
+// `this.prisma` — voir le test de régression dédié plus bas.
+const buildTxClient = () => ({
+  aiMessage: { create: jest.fn() },
+  recommendation: { create: jest.fn() },
+});
+
 describe('AssistantIService', () => {
   let service: AssistantIService;
   let prisma: MockedPrisma;
+  let txClient: ReturnType<typeof buildTxClient>;
   let iaEngine: jest.Mocked<IAEngineInterface>;
 
   const mockUser: AuthenticatedUser = {
@@ -47,6 +58,8 @@ describe('AssistantIService', () => {
   };
 
   beforeEach(async () => {
+    txClient = buildTxClient();
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AssistantIService,
@@ -58,19 +71,26 @@ describe('AssistantIService', () => {
               findUnique: jest.fn(),
             },
             aiMessage: {
-              create: jest.fn(),
+              // Volontairement PAS de mock ici : si le service régresse et
+              // se remet à appeler `this.prisma.aiMessage.create` au lieu de
+              // `tx.aiMessage.create`, cet appel renverra `undefined` et les
+              // assertions sur `txClient.aiMessage.create` échoueront.
+              create: undefined as unknown as jest.Mock,
             },
             campaign: {
               findFirst: jest.fn(),
             },
             recommendation: {
               findMany: jest.fn(),
-              create: jest.fn(),
+              create: undefined as unknown as jest.Mock,
             },
-            // Callback-style transaction mock: matches
-            // `this.prisma.$transaction(async () => { ... })`
-            // used in the service. Must NOT be passed an array.
-            $transaction: jest.fn((callback: () => unknown) => callback()),
+            // Callback-style transaction mock, fidèle au comportement réel
+            // de Prisma : le callback reçoit un client transactionnel `tx`
+            // DISTINCT de `this.prisma`.
+            $transaction: jest.fn(
+              (callback: (tx: typeof txClient) => unknown) =>
+                callback(txClient),
+            ),
           },
         },
         {
@@ -137,7 +157,7 @@ describe('AssistantIService', () => {
 
       prisma.aiConversation.findUnique.mockResolvedValue(conversation);
       iaEngine.askQuestion.mockResolvedValue(iaResponse);
-      prisma.aiMessage.create
+      txClient.aiMessage.create
         .mockResolvedValueOnce(userMessage)
         .mockResolvedValueOnce(iaMessage);
 
@@ -153,6 +173,9 @@ describe('AssistantIService', () => {
         userMessage: dto.content,
         context: { topic: conversation.topic },
       });
+      // Régression du bug historique : les écritures doivent passer par le
+      // client transactionnel `tx`, jamais par `this.prisma` directement.
+      expect(txClient.aiMessage.create).toHaveBeenCalledTimes(2);
     });
 
     it('should throw if conversation not found', async () => {
@@ -264,7 +287,7 @@ describe('AssistantIService', () => {
 
       prisma.campaign.findFirst.mockResolvedValue(campaign);
       iaEngine.generateRecommendations.mockResolvedValue(iaResult);
-      prisma.recommendation.create
+      txClient.recommendation.create
         .mockResolvedValueOnce(createdRecs[0])
         .mockResolvedValueOnce(createdRecs[1]);
 
@@ -276,6 +299,7 @@ describe('AssistantIService', () => {
         objective: campaign.objective,
         plannedBudget: 1000,
       });
+      expect(txClient.recommendation.create).toHaveBeenCalledTimes(2);
     });
 
     it('should throw if campaign not found', async () => {

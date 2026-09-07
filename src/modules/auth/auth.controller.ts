@@ -1,4 +1,5 @@
 import { Controller, Post, Get, Body, Request } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { Request as ExpressRequest } from 'express';
 import { Role } from '@prisma/client';
 import { AuthService } from './auth.service';
@@ -17,19 +18,26 @@ interface AuthenticatedRequest extends ExpressRequest {
 export class AuthController {
   constructor(private authService: AuthService) {}
 
+  // SÉCURITÉ (correctif audit — majeur) : ces trois endpoints sont publics
+  // par nature et constituent la cible évidente d'attaques par force brute
+  // / credential stuffing / spam d'inscription. On leur applique une limite
+  // dédiée, plus stricte que la limite globale (`default`).
   @Public()
+  @Throttle({ default: { limit: 5, ttl: 60_000 } }) // 5 inscriptions / min / IP
   @Post('register')
   async register(@Body() dto: RegisterDto) {
     return this.authService.register(dto);
   }
 
   @Public()
+  @Throttle({ default: { limit: 5, ttl: 60_000 } }) // 5 tentatives / min / IP
   @Post('login')
   async login(@Body() dto: LoginDto) {
     return this.authService.login(dto);
   }
 
   @Public()
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('refresh')
   async refresh(@Body() dto: RefreshTokenDto) {
     return this.authService.refresh(dto.refreshToken);

@@ -9,6 +9,7 @@ import {
 import { UsersService } from './users.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { QueueService } from '../queue/queue.service';
 import { Role } from '@prisma/client';
 import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 
@@ -16,6 +17,7 @@ describe('UsersService', () => {
   let service: UsersService;
   let prisma: jest.Mocked<PrismaService>;
   let notificationsService: jest.Mocked<NotificationsService>;
+  let queueService: jest.Mocked<QueueService>;
 
   const mockUser: AuthenticatedUser = {
     userId: 'admin-1',
@@ -57,12 +59,19 @@ describe('UsersService', () => {
             creer: jest.fn(),
           },
         },
+        {
+          provide: QueueService,
+          useValue: {
+            addJob: jest.fn(),
+          },
+        },
       ],
     }).compile();
 
     service = module.get<UsersService>(UsersService);
     prisma = module.get(PrismaService);
     notificationsService = module.get(NotificationsService);
+    queueService = module.get(QueueService);
   });
 
   describe('createSubAccount', () => {
@@ -92,6 +101,13 @@ describe('UsersService', () => {
         type: 'INFO',
         recipientId: mockUser.userId,
       });
+      // CORRECTIF AUDIT (mineur) : le mot de passe temporaire est transmis
+      // via la queue, jamais loggé en clair.
+      expect(queueService.addJob).toHaveBeenCalledWith(
+        'notifications',
+        'send-temporary-password',
+        expect.objectContaining({ email: dto.email }) as unknown,
+      );
     });
 
     it('should throw ConflictException if email already exists', async () => {

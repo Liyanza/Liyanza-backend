@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { CreateNotificationDto } from './dto/create-notification.dto';
@@ -31,7 +32,7 @@ export class NotificationsService {
    * Can be filtered by readStatus (UNREAD/READ/ALL).
    */
   async findAll(user: AuthenticatedUser, query: NotificationQueryDto) {
-    const where: any = {
+    const where: Prisma.NotificationWhereInput = {
       recipientId: user.userId,
     };
 

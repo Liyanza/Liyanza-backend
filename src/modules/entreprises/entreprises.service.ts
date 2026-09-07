@@ -2,13 +2,14 @@ import {
   Injectable,
   NotFoundException,
   ConflictException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateEntrepriseDto } from './dto/create-entreprise.dto';
 import { UpdateEntrepriseDto } from './dto/update-entreprise.dto';
 import { assertSameCompany } from '../auth/utils/company-scope.util';
 import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
-import { Role } from '@prisma/client';
+import { Role, Prisma } from '@prisma/client';
 
 @Injectable()
 export class EntreprisesService {
@@ -105,15 +106,39 @@ export class EntreprisesService {
 
   /**
    * Returns a paginated and filtered list of companies (soft-deleted excluded).
-   * Currently restricted to ADMIN users (future SUPER_ADMIN role).
+   *
+   * SÉCURITÉ (correctif audit — faille critique) : cet endpoint listait
+   * auparavant TOUTES les entreprises de la plateforme dès lors que
+   * l'appelant avait le rôle `ADMIN`, sans aucune vérification qu'il était
+   * bien admin de l'entreprise consultée. Combinée à l'ancienne faille
+   * d'inscription (rôle/entreprise choisis par le client), cela permettait
+   * à n'importe quel attaquant d'énumérer les `id` de toutes les entreprises
+   * puis de les rejoindre.
+   *
+   * Le rôle `ADMIN` de ce domaine est scopé à une seule entreprise : il n'y a
+   * (pour l'instant) aucun rôle plateforme distinct habilité à parcourir
+   * l'ensemble des tenants. Cette méthode ne retourne donc jamais que
+   * l'entreprise de l'appelant. Si un vrai rôle plateforme (ex: `SUPER_ADMIN`)
+   * est introduit un jour, cette restriction devra être explicitement levée
+   * pour ce rôle uniquement (voir `assertSameCompanyUnless`).
    */
   async findAll(
+    user: AuthenticatedUser,
     page: number = 1,
     limit: number = 10,
     filters?: { name?: string; businessSector?: string },
   ) {
+    if (!user.companyId) {
+      throw new ForbiddenException(
+        'You must belong to a company to list companies.',
+      );
+    }
+
     const skip = (page - 1) * limit;
-    const where: any = { deletedAt: null };
+    const where: Prisma.CompanyWhereInput = {
+      deletedAt: null,
+      id: user.companyId, // ← isolation multi-tenant stricte
+    };
 
     if (filters?.name) {
       where.name = { contains: filters.name, mode: 'insensitive' };

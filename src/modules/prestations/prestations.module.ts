@@ -5,10 +5,12 @@ import type { StringValue } from 'ms';
 import { PrestationsController } from './prestations.controller';
 import { PrestationsService } from './prestations.service';
 import { PrismaModule } from '../prisma/prisma.module';
+import { RedisModule } from '../redis/redis.module';
 
 @Module({
   imports: [
     PrismaModule,
+    RedisModule, // suivi d'usage unique (jti) des liens de validation
     JwtModule.registerAsync({
       imports: [ConfigModule],
       useFactory: (configService: ConfigService) => ({

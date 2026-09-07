@@ -7,8 +7,6 @@ import {
   Body,
   Query,
   Request,
-  ParseIntPipe,
-  DefaultValuePipe,
 } from '@nestjs/common';
 import { Request as ExpressRequest } from 'express';
 import { Role } from '@prisma/client';
@@ -17,6 +15,7 @@ import { CreateEntrepriseDto } from './dto/create-entreprise.dto';
 import { UpdateEntrepriseDto } from './dto/update-entreprise.dto';
 import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
 
 interface AuthenticatedRequest extends ExpressRequest {
   user: AuthenticatedUser;
@@ -34,15 +33,20 @@ export class EntreprisesController {
     return this.entreprisesService.create(createDto, req.user);
   }
 
+  /**
+   * Retourne l'entreprise de l'appelant (paginée par cohérence d'API, mais
+   * scopée à une seule entreprise — voir `EntreprisesService.findAll` pour
+   * le détail du correctif de sécurité).
+   */
   @Get()
-  @Roles(Role.ADMIN) // Reserved for admins (future SUPER_ADMIN)
+  @Roles(Role.ADMIN)
   async findAll(
-    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
-    @Query('limit', new DefaultValuePipe(10), ParseIntPipe) limit: number,
+    @Request() req: AuthenticatedRequest,
+    @Query() { page = 1, limit = 10 }: PaginationQueryDto,
     @Query('name') name?: string,
     @Query('businessSector') businessSector?: string,
   ) {
-    return this.entreprisesService.findAll(page, limit, {
+    return this.entreprisesService.findAll(req.user, page, limit, {
       name,
       businessSector,
     });

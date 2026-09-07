@@ -9,7 +9,7 @@ import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interfa
 import { AssociateChannelsDto } from './dto/associate-channels.dto';
 import { CreateScheduleDto } from './dto/create-schedule.dto';
 import { ScheduleQueryDto } from './dto/schedule-query.dto';
-import { CampaignStatus } from '@prisma/client';
+import { CampaignStatus, Prisma, Campaign } from '@prisma/client';
 
 @Injectable()
 export class CanauxService {
@@ -109,7 +109,7 @@ export class CanauxService {
     const { channelId, dateFrom, dateTo, page, limit } = query;
     const skip = (page - 1) * limit;
 
-    const where: any = {
+    const where: Prisma.BroadcastWhereInput = {
       campaignId: campaignId,
     };
 
@@ -177,7 +177,7 @@ export class CanauxService {
     return campaign;
   }
 
-  private validateCampaignNotTerminated(campaign: any) {
+  private validateCampaignNotTerminated(campaign: Campaign) {
     if (
       campaign.status === CampaignStatus.COMPLETED ||
       campaign.status === CampaignStatus.CANCELLED

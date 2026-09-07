@@ -8,7 +8,7 @@ import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interfa
 import { assertSameCompany } from '../auth/utils/company-scope.util';
 import { StatistiqueFilterDto } from './dto/statistique-filter.dto';
 import { DashboardResponseDto } from './dto/dashboard-response.dto';
-import { CampaignStatus, BroadcastStatus } from '@prisma/client';
+import { CampaignStatus, BroadcastStatus, Prisma } from '@prisma/client';
 import { Parser } from 'json2csv';
 import PdfPrinter from 'pdfmake';
 import type { TDocumentDefinitions } from 'pdfmake/interfaces';
@@ -38,6 +38,18 @@ export class StatistiquesService {
     user: AuthenticatedUser,
     filters: StatistiqueFilterDto,
   ) {
+    // CORRECTIF AUDIT (mineur #12) : par cohérence avec les autres méthodes
+    // de ce service (et du reste de l'application), on rejette
+    // explicitement les utilisateurs sans entreprise plutôt que de laisser
+    // `companyId: null` se propager dans la clause Prisma — un utilisateur
+    // orphelin (jamais rattaché à une entreprise) ne doit avoir accès à
+    // aucune statistique de campagne.
+    if (!user.companyId) {
+      throw new ForbiddenException(
+        'You must belong to a company to view campaign statistics.',
+      );
+    }
+
     // Verify campaign access
     const campaign = await this.prisma.campaign.findFirst({
       where: {
@@ -52,7 +64,7 @@ export class StatistiquesService {
     assertSameCompany(user, campaign.launchedBy.companyId, 'Campaign');
 
     // Build WHERE clause
-    const where: any = { campaignId };
+    const where: Prisma.StatisticWhereInput = { campaignId };
     if (filters.indicator) {
       where.indicator = { contains: filters.indicator, mode: 'insensitive' };
     }
@@ -84,14 +96,24 @@ export class StatistiquesService {
 
     const companyId = user.companyId;
 
-    // Fetch all campaigns of the company with their broadcasts and installations
+    // CORRECTIF AUDIT (mineur — recommandation performance) : seul le champ
+    // `status` de `broadcasts`/`installations` est utilisé plus bas dans ce
+    // calcul. Charger les lignes complètes (`include: true`) surchargeait
+    // inutilement la mémoire et la bande passante réseau pour les tenants
+    // ayant beaucoup de campagnes/diffusions/installations. On ne
+    // sélectionne désormais que les champs réellement consommés.
     const campaigns = await this.prisma.campaign.findMany({
       where: {
         launchedBy: { companyId },
       },
-      include: {
-        broadcasts: true,
-        installations: true,
+      select: {
+        id: true,
+        name: true,
+        status: true,
+        plannedBudget: true,
+        actualBudget: true,
+        broadcasts: { select: { status: true } },
+        installations: { select: { status: true } },
       },
     });
 

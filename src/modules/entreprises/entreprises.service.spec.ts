@@ -2,7 +2,11 @@
 /* eslint-disable @typescript-eslint/no-unsafe-argument */
 
 import { Test, TestingModule } from '@nestjs/testing';
-import { ConflictException, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { EntreprisesService } from './entreprises.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { Role } from '@prisma/client';
@@ -142,30 +146,52 @@ describe('EntreprisesService', () => {
   });
 
   describe('findAll', () => {
-    it('should return paginated list of non-deleted companies', async () => {
-      const items = [mockCompany, { ...mockCompany, id: 'company-2' }];
-      (prisma.company.findMany as jest.Mock).mockResolvedValue(items);
-      (prisma.company.count as jest.Mock).mockResolvedValue(2);
+    const user = { ...mockUser, companyId: 'company-1' };
 
-      const result = await service.findAll(1, 10);
-      expect(result.items).toHaveLength(2);
-      expect(result.total).toBe(2);
-      expect(result.page).toBe(1);
-      expect(result.totalPages).toBe(1);
+    it('should throw ForbiddenException if the caller has no company', async () => {
+      await expect(
+        service.findAll({ ...mockUser, companyId: null }, 1, 10),
+      ).rejects.toThrow(ForbiddenException);
     });
 
-    it('should apply filters correctly', async () => {
+    it('should return only the caller company, scoped by id (security fix)', async () => {
+      const items = [mockCompany];
+      (prisma.company.findMany as jest.Mock).mockResolvedValue(items);
+      (prisma.company.count as jest.Mock).mockResolvedValue(1);
+
+      const result = await service.findAll(user, 1, 10);
+      expect(result.items).toHaveLength(1);
+      expect(result.total).toBe(1);
+      expect(result.page).toBe(1);
+      expect(result.totalPages).toBe(1);
+
+      // Régression critique : la requête DOIT toujours filtrer sur
+      // l'entreprise de l'appelant, jamais lister toutes les entreprises.
+      expect(prisma.company.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            deletedAt: null,
+            id: user.companyId,
+          }) as unknown,
+        }),
+      );
+    });
+
+    it('should never leak another company even if a "name" filter matches it', async () => {
+      // Even if an attacker crafts a filter that would otherwise match a
+      // victim company by name, the hard `id: user.companyId` constraint
+      // must remain present in the query.
       (prisma.company.findMany as jest.Mock).mockResolvedValue([]);
       (prisma.company.count as jest.Mock).mockResolvedValue(0);
 
-      await service.findAll(1, 10, { name: 'Test', businessSector: 'Tech' });
+      await service.findAll(user, 1, 10, { name: 'Victim Corp' });
+
       expect(prisma.company.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: {
-            deletedAt: null,
-            name: { contains: 'Test', mode: 'insensitive' },
-            businessSector: { contains: 'Tech', mode: 'insensitive' },
-          },
+          where: expect.objectContaining({
+            id: user.companyId,
+            name: { contains: 'Victim Corp', mode: 'insensitive' },
+          }) as unknown,
         }),
       );
     });
