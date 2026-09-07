@@ -291,7 +291,7 @@ export class CampagnesService {
     if (!campaign.endDate) {
       throw new BadRequestException('Campaign end date is required.');
     }
-    if (campaign.plannedBudget <= 0) {
+    if (campaign.plannedBudget.lte(0)) {
       throw new BadRequestException('Campaign planned budget must be > 0.');
     }
   }
