@@ -27,9 +27,15 @@
 
 import 'dotenv/config';
 import { PrismaClient, Role, CampaignStatus } from '@prisma/client';
+import { PrismaPg } from '@prisma/adapter-pg';
 import * as bcrypt from 'bcrypt';
 
-const prisma = new PrismaClient();
+// CORRECTIF : aligné sur `PrismaService` (src/modules/prisma/prisma.service.ts).
+// `schema.prisma` ne déclare pas de `url` dans son bloc `datasource` (l'URL
+// est fournie via `prisma.config.ts` pour le CLI, et via l'adapter pour le
+// runtime) — `new PrismaClient()` sans adapter échoue donc systématiquement.
+const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
+const prisma = new PrismaClient({ adapter });
 
 /**
  * Même coût de hachage que `AuthService.register` (BACK-105) afin que le
@@ -165,6 +171,29 @@ async function main() {
       flyer: false,
       campaignId: campaign.id,
     },
+  });
+
+  // ---------------------------------------------------------------------
+  // 4. Tâche d'équipe d'exemple (BACK-212)
+  // ---------------------------------------------------------------------
+  const task = await prisma.task.upsert({
+    where: { id: 'seed-task-1' },
+    update: {},
+    create: {
+      id: 'seed-task-1',
+      title: 'Valider le plan média de la campagne Demo',
+      description: 'Relire le planning de diffusion avant lancement.',
+      dueDate: new Date('2026-09-15T00:00:00.000Z'),
+      companyId: company.id,
+      createdById: admin.id,
+      campaignId: campaign.id,
+    },
+  });
+
+  await prisma.taskAssignee.upsert({
+    where: { taskId_userId: { taskId: task.id, userId: marketingManager.id } },
+    update: {},
+    create: { taskId: task.id, userId: marketingManager.id },
   });
 
   console.log('[seed] Terminé avec succès ✅');
