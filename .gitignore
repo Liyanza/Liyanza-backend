@@ -24,3 +24,8 @@ lerna-debug.log*
 .tmp
 
 /generated/prisma
+
+CLAUDE.md
+BACKLOG_REORIENTE.md
+README_INSTALLATION.md
+.claude/skills

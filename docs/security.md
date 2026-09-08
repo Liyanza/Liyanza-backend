@@ -82,24 +82,28 @@ Cette matrice sert de référence pour l'annotation `@Roles(...)` des futurs
 contrôleurs métier. Elle sera affinée module par module au fil des tickets ;
 elle reflète l'intention fonctionnelle actuelle du cadrage.
 
-| Fonctionnalité                                                      | `ADMIN` | `MARKETING_MANAGER` | `COMMUNITY_MANAGER` | `PROVIDER` |
-| ------------------------------------------------------------------- | :-----: | :-----------------: | :-----------------: | :--------: |
-| Gérer les sous-comptes & permissions                                |   ✅    |         ❌          |         ❌          |     ❌     |
-| Définir objectifs / budget / cible d'une campagne                   |   ✅    |         ✅          |         ❌          |     ❌     |
-| Lancer une campagne marketing                                       |   ✅    |         ✅          |         ❌          |     ❌     |
-| Ajouter le contenu d'un spot, choisir les canaux                    |   ✅    |         ✅          |         ✅          |     ❌     |
-| Soumettre un spot à validation                                      |   ✅    |         ✅          |         ✅          |     ❌     |
-| Simuler les performances d'une campagne                             |   ✅    |         ✅          |         ❌          |     ❌     |
-| Consulter le monitoring de diffusion / conformité radio             |   ✅    |         ✅          |         ✅          |     ❌     |
-| Générer des rapports de conformité                                  |   ✅    |         ✅          |         ❌          |     ❌     |
-| Photographier une installation (preuve de publication géolocalisée) |   ❌    |         ❌          |         ❌          |     ✅     |
-| Consulter le tableau de bord / statistiques                         |   ✅    |         ✅          |    ✅ (lecture)     |     ❌     |
-| Générer / exporter des rapports                                     |   ✅    |         ✅          |         ❌          |     ❌     |
-| Utiliser l'assistant IA marketing                                   |   ✅    |         ✅          |         ✅          |     ❌     |
-| Analyser les performances / recommandations / ROI                   |   ✅    |         ✅          |         ❌          |     ❌     |
-| Consulter ses propres notifications                                 |   ✅    |         ✅          |         ✅          |     ✅     |
-| Marquer une notification comme lue                                  |   ✅    |         ✅          |         ✅          |     ✅     |
-| Accéder au dashboard BullMQ (/admin/queues)                         |   ✅    |         ❌          |         ❌          |     ❌     |
+| Fonctionnalité                                                      |   `ADMIN`   | `MARKETING_MANAGER` | `COMMUNITY_MANAGER` |   `PROVIDER`    |
+| ------------------------------------------------------------------- | :---------: | :-----------------: | :-----------------: | :-------------: |
+| Gérer les sous-comptes & permissions                                |     ✅      |         ❌          |         ❌          |       ❌        |
+| Définir objectifs / budget / cible d'une campagne                   |     ✅      |         ✅          |         ❌          |       ❌        |
+| Lancer une campagne marketing                                       |     ✅      |         ✅          |         ❌          |       ❌        |
+| Ajouter le contenu d'un spot, choisir les canaux                    |     ✅      |         ✅          |         ✅          |       ❌        |
+| Soumettre un spot à validation                                      |     ✅      |         ✅          |         ✅          |       ❌        |
+| Simuler les performances d'une campagne                             |     ✅      |         ✅          |         ❌          |       ❌        |
+| Consulter le monitoring de diffusion / conformité radio             |     ✅      |         ✅          |         ✅          |       ❌        |
+| Générer des rapports de conformité                                  |     ✅      |         ✅          |         ❌          |       ❌        |
+| Photographier une installation (preuve de publication géolocalisée) |     ❌      |         ❌          |         ❌          |       ✅        |
+| Consulter le tableau de bord / statistiques                         |     ✅      |         ✅          |    ✅ (lecture)     |       ❌        |
+| Générer / exporter des rapports                                     |     ✅      |         ✅          |         ❌          |       ❌        |
+| Utiliser l'assistant IA marketing                                   |     ✅      |         ✅          |         ✅          |       ❌        |
+| Analyser les performances / recommandations / ROI                   |     ✅      |         ✅          |         ❌          |       ❌        |
+| Consulter ses propres notifications                                 |     ✅      |         ✅          |         ✅          |       ✅        |
+| Marquer une notification comme lue                                  |     ✅      |         ✅          |         ✅          |       ✅        |
+| Accéder au dashboard BullMQ (/admin/queues)                         |     ✅      |         ❌          |         ❌          |       ❌        |
+| Créer une tâche / l'attribuer à des collaborateurs                  |     ✅      |         ✅          |         ❌          |       ❌        |
+| Modifier les métadonnées d'une tâche (titre, échéance, assignés)    |     ✅      |         ✅          |         ❌          |       ❌        |
+| Consulter les tâches de l'entreprise                                |     ✅      |         ✅          |     ✅ (toutes)     |   ✅ (toutes)   |
+| Changer le statut d'une tâche                                       | ✅ (toutes) |     ✅ (toutes)     |   ✅ (si assigné)   | ✅ (si assigné) |
 
 **Utilisation dans le code :**
 

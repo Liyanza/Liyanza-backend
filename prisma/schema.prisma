@@ -29,40 +29,50 @@ enum BroadcastStatus {
   CANCELLED
 }
 
+enum TaskStatus {
+  TODO
+  IN_PROGRESS
+  DONE
+  LATE
+}
+
 /// Entité ENTREPRISE – racine du multi-tenant.
 model Company {
-  id             String   @id @default(cuid())
+  id             String    @id @default(cuid())
   name           String
   businessSector String
   address        String
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
-  deletedAt      DateTime? 
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  deletedAt      DateTime?
 
-  users          User[]
+  users           User[]
   aiConversations AiConversation[] // ← nouvelle relation inverse
   recommendations Recommendation[] // ← nouvelle relation inverse
+  tasks           Task[] // ← BACK-212
 }
 
 /// Entité UTILISATEUR
 model User {
-  id        String   @id @default(cuid())
-  firstName String
-  lastName  String
-  email     String   @unique
-  password  String
-  phone     String
-  role      Role
-  createdAt DateTime @default(now())
+  id            String    @id @default(cuid())
+  firstName     String
+  lastName      String
+  email         String    @unique
+  password      String
+  phone         String
+  role          Role
+  createdAt     DateTime  @default(now())
   deactivatedAt DateTime?
 
   companyId String?
   company   Company? @relation(fields: [companyId], references: [id])
 
-  campaigns     Campaign[]
-  installations Installation[]
-  notifications Notification[]
+  campaigns              Campaign[]
+  installations          Installation[]
+  notifications          Notification[]
   aiConversationsCreated AiConversation[] // ← nouvelle relation inverse (créateur)
+  tasksCreated           Task[]           @relation("TaskCreatedBy") // ← BACK-212
+  taskAssignments        TaskAssignee[] // ← BACK-212
 
   @@index([companyId])
 }
@@ -72,35 +82,36 @@ model User {
 // =====================================================================
 
 model Campaign {
-  id             String   @id @default(cuid())
-  name           String
-  startDate      DateTime
-  endDate        DateTime
-  plannedBudget  Decimal  @db.Decimal(12, 2)
-  actualBudget   Decimal  @db.Decimal(12, 2)
-  status         CampaignStatus @default(DRAFT)
-  objective      String
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  id            String         @id @default(cuid())
+  name          String
+  startDate     DateTime
+  endDate       DateTime
+  plannedBudget Decimal        @db.Decimal(12, 2)
+  actualBudget  Decimal        @db.Decimal(12, 2)
+  status        CampaignStatus @default(DRAFT)
+  objective     String
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
 
-  launchedById   String
-  launchedBy     User     @relation(fields: [launchedById], references: [id])
+  launchedById String
+  launchedBy   User   @relation(fields: [launchedById], references: [id])
 
-  channels       AdvertisingChannel[]
-  broadcasts     Broadcast[]
-  installations  Installation[]
-  statistics     Statistic[]
+  channels        AdvertisingChannel[]
+  broadcasts      Broadcast[]
+  installations   Installation[]
+  statistics      Statistic[]
   recommendations Recommendation[] // ← nouvelle relation inverse
+  tasks           Task[] // ← BACK-212
 
   @@index([launchedById])
 }
 
 /// Entité CANAUX_PUBLICITAIRE
 model AdvertisingChannel {
-  id        String  @id @default(cuid())
-  radio     Boolean
-  poster    Boolean
-  flyer     Boolean
+  id     String  @id @default(cuid())
+  radio  Boolean
+  poster Boolean
+  flyer  Boolean
 
   campaignId String
   campaign   Campaign @relation(fields: [campaignId], references: [id])
@@ -111,20 +122,20 @@ model AdvertisingChannel {
 }
 
 model Broadcast {
-  id             String   @id @default(cuid())
-  mediaType      String
-  scheduledAt    DateTime
+  id                String          @id @default(cuid())
+  mediaType         String
+  scheduledAt       DateTime
   actualBroadcastAt DateTime?
-  duration       Int
-  status         BroadcastStatus @default(PLANNED)
-  audioProof     String?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  duration          Int
+  status            BroadcastStatus @default(PLANNED)
+  audioProof        String?
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
 
-  campaignId     String
-  campaign       Campaign @relation(fields: [campaignId], references: [id])
-  channelId      String
-  channel        AdvertisingChannel @relation(fields: [channelId], references: [id])
+  campaignId String
+  campaign   Campaign           @relation(fields: [campaignId], references: [id])
+  channelId  String
+  channel    AdvertisingChannel @relation(fields: [channelId], references: [id])
 
   @@index([campaignId])
   @@index([channelId])
@@ -150,7 +161,7 @@ model Installation {
   providerId String
   provider   User   @relation(fields: [providerId], references: [id])
 
-  proof PublicationProof?
+  proof         PublicationProof?
   statusHistory StatusHistory[]
 
   @@index([campaignId])
@@ -166,12 +177,12 @@ model PublicationProof {
   validationStatus String
   createdAt        DateTime @default(now())
 
-  installationId String @unique
+  installationId String       @unique
   installation   Installation @relation(fields: [installationId], references: [id])
 }
 
 model StatusHistory {
-  id            String   @id @default(cuid())
+  id             String   @id @default(cuid())
   previousStatus String
   newStatus      String
   changedAt      DateTime
@@ -186,22 +197,22 @@ model StatusHistory {
 
 /// Entité SIMULATION
 model Simulation {
-  id               String   @id @default(cuid())
-  estimatedBudget  Decimal  @db.Decimal(12, 2)
-  expectedResults  String   @db.Text
-  simulatedAt      DateTime
-  parameters       Json
+  id              String   @id @default(cuid())
+  estimatedBudget Decimal  @db.Decimal(12, 2)
+  expectedResults String   @db.Text
+  simulatedAt     DateTime
+  parameters      Json
 
-  questionnaireId String @unique
+  questionnaireId String        @unique
   questionnaire   Questionnaire @relation(fields: [questionnaireId], references: [id])
 }
 
 model Questionnaire {
-  id            String   @id @default(cuid())
-  completedAt   DateTime
+  id          String   @id @default(cuid())
+  completedAt DateTime
 
   simulation Simulation?
-  answers SimulationAnswer[]
+  answers    SimulationAnswer[]
 }
 
 model Question {
@@ -234,18 +245,18 @@ model AiConversation {
   companyId   String?
   createdById String?
 
-  company     Company?  @relation(fields: [companyId], references: [id])
-  createdBy   User?     @relation(fields: [createdById], references: [id])
+  company   Company? @relation(fields: [companyId], references: [id])
+  createdBy User?    @relation(fields: [createdById], references: [id])
 
-  messages    AiMessage[]
+  messages AiMessage[]
 }
 
 /// Entité MESSAGE_IA
 model AiMessage {
-  id        String   @id @default(cuid())
-  content   String   @db.Text
-  sender    String
-  sentAt    DateTime
+  id      String   @id @default(cuid())
+  content String   @db.Text
+  sender  String
+  sentAt  DateTime
 
   conversationId String
   conversation   AiConversation @relation(fields: [conversationId], references: [id])
@@ -263,14 +274,14 @@ model Recommendation {
   priority    String
   generatedAt DateTime
 
-  sourceMessageId String? @unique
+  sourceMessageId String?    @unique
   sourceMessage   AiMessage? @relation(fields: [sourceMessageId], references: [id])
 
-  campaignId  String
-  companyId   String?
+  campaignId String
+  companyId  String?
 
-  campaign    Campaign @relation(fields: [campaignId], references: [id])
-  company     Company? @relation(fields: [companyId], references: [id])
+  campaign Campaign @relation(fields: [campaignId], references: [id])
+  company  Company? @relation(fields: [companyId], references: [id])
 }
 
 /// Entité STATISTIQUE
@@ -289,16 +300,53 @@ model Statistic {
 
 /// Entité NOTIFICATION
 model Notification {
-  id          String   @id @default(cuid())
-  title       String
-  message     String   @db.Text
-  type        String
-  sentAt      DateTime
-  readStatus  String
+  id         String   @id @default(cuid())
+  title      String
+  message    String   @db.Text
+  type       String
+  sentAt     DateTime
+  readStatus String
 
   recipientId String
   recipient   User   @relation(fields: [recipientId], references: [id])
 
   @@index([recipientId])
   @@index([sentAt])
+}
+
+// =====================================================================
+// BACK-212 — Tâches d'équipe (gestion des tâches du tableau de bord)
+// =====================================================================
+
+model Task {
+  id          String     @id @default(cuid())
+  title       String
+  description String?    @db.Text
+  status      TaskStatus @default(TODO)
+  dueDate     DateTime?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id])
+
+  createdById String
+  createdBy   User   @relation("TaskCreatedBy", fields: [createdById], references: [id])
+
+  assignees  TaskAssignee[]
+  campaignId String?
+  campaign   Campaign?      @relation(fields: [campaignId], references: [id])
+
+  @@index([companyId])
+  @@index([dueDate])
+}
+
+model TaskAssignee {
+  taskId String
+  userId String
+  task   Task   @relation(fields: [taskId], references: [id])
+  user   User   @relation(fields: [userId], references: [id])
+
+  @@id([taskId, userId])
+  @@index([userId])
 }

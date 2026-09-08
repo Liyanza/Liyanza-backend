@@ -29,8 +29,10 @@ import { DiffusionsModule } from './modules/diffusions/diffusions.module';
 import { PrestationsModule } from './modules/prestations/prestations.module';
 import { StatistiquesModule } from './modules/statistiques/statistiques.module';
 import { AssistantIAModule } from './modules/assistant-ia/assistant-ia.module';
+import { SimulationsModule } from './modules/simulations/simulations.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { QueueModule } from './modules/queue/queue.module';
+import { TasksModule } from './modules/tasks/tasks.module';
 
 @Module({
   imports: [
@@ -71,8 +73,10 @@ import { QueueModule } from './modules/queue/queue.module';
     PrestationsModule,
     StatistiquesModule,
     AssistantIAModule,
+    SimulationsModule,
     NotificationsModule,
     QueueModule,
+    TasksModule,
   ],
   controllers: [AppController],
   providers: [
