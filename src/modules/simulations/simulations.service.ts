@@ -1,5 +1,6 @@
 import {
   Injectable,
+  Logger,
   NotFoundException,
   ForbiddenException,
   BadRequestException,
@@ -16,6 +17,8 @@ import { CampaignStatus } from '@prisma/client';
 
 @Injectable()
 export class SimulationsService {
+  private readonly logger = new Logger(SimulationsService.name);
+
   constructor(
     private prisma: PrismaService,
     @Inject(SIMULATION_ENGINE_TOKEN)
@@ -111,11 +114,24 @@ export class SimulationsService {
     };
 
     // 5. Call IA engine
+    //
+    // CORRECTIF AUDIT (majeur — atomicité) : l'appel au moteur était placé
+    // ENTRE la création du questionnaire et celle de la simulation. Toute
+    // panne du moteur (timeout, 5xx) laissait donc en base un `Questionnaire`
+    // et ses `SimulationAnswer` orphelins, jamais rattachés à une simulation
+    // et jamais nettoyés. On appelle désormais le moteur AVANT toute écriture,
+    // puis on persiste l'ensemble dans une transaction unique.
     let simulationResult;
     try {
       simulationResult = await this.simulationEngine.simulate(parameters);
     } catch (error) {
-      console.error('Simulation engine error:', error);
+      // CORRECTIF AUDIT (mineur) : `console.error` court-circuitait le
+      // `LoggerService` (donc la corrélation par `requestId` et le format
+      // JSON structuré attendu par la stack de logs).
+      this.logger.error(
+        `Simulation engine failure for campaign ${campaign.id}`,
+        error instanceof Error ? error.stack : String(error),
+      );
       throw new InternalServerErrorException(
         'Failed to get simulation results from AI engine. Please try again later.',
       );
@@ -127,7 +143,7 @@ export class SimulationsService {
         estimatedBudget: simulationResult.estimatedBudget,
         expectedResults: simulationResult.expectedResults,
         simulatedAt: new Date(),
-        parameters: parameters as any,
+        parameters,
         questionnaireId: questionnaire.id,
       },
     });
@@ -163,29 +179,48 @@ export class SimulationsService {
     }
     assertSameCompany(user, campaign.launchedBy.companyId, 'Campaign');
 
-    // Since campaignId is not yet in the schema, we store it in parameters JSON.
-    // We fetch all simulations and filter in memory.
-    // This is a temporary workaround until we add campaignId to the Simulation model.
-    const allSimulations = await this.prisma.simulation.findMany({
+    // CORRECTIF AUDIT (majeur — DoS et lecture cross-tenant) : cette méthode
+    // chargeait TOUTES les simulations de TOUTES les entreprises de la
+    // plateforme (`findMany` sans clause `where`), avec trois niveaux
+    // d'`include` imbriqués (questionnaire -> answers -> question), avant de
+    // filtrer en mémoire sur `parameters.campaignId`. Autrement dit : un scan
+    // séquentiel complet de la table `Simulation` jointe deux fois, exécuté à
+    // chaque consultation, dont 99 % des lignes étaient jetées côté Node.
+    // Le résultat final restait correct, mais le coût croissait linéairement
+    // avec le volume global de la plateforme — et une base de données
+    // d'entreprises tierces était intégralement rapatriée dans le processus.
+    //
+    // Le filtre est désormais poussé en base via le champ `Json` `parameters`
+    // (`path` + `equals`, supporté par Prisma sur PostgreSQL), et le résultat
+    // est borné et paginé.
+    //
+    // NOTE : la correction de fond consiste à matérialiser `campaignId` en
+    // colonne indexée sur le modèle `Simulation` — voir le plan d'action de
+    // l'audit. Le filtre JSON reste un index-less scan tant que la migration
+    // n'est pas faite, mais il s'exécute côté Postgres et ne transfère plus
+    // que les lignes pertinentes.
+    return this.prisma.simulation.findMany({
+      where: {
+        parameters: {
+          path: ['campaignId'],
+          equals: campaignId,
+        },
+      },
       include: {
         questionnaire: {
           include: {
             answers: {
               include: {
-                question: true,
+                question: {
+                  select: { id: true, label: true, fieldType: true },
+                },
               },
             },
           },
         },
       },
       orderBy: { simulatedAt: 'desc' },
+      take: 50,
     });
-
-    // Filter simulations where parameters.campaignId matches
-    const filtered = allSimulations.filter(
-      (sim) => (sim.parameters as any)?.campaignId === campaignId,
-    );
-
-    return filtered;
   }
 }

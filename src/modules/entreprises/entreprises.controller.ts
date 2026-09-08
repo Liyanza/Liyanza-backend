@@ -15,7 +15,7 @@ import { CreateEntrepriseDto } from './dto/create-entreprise.dto';
 import { UpdateEntrepriseDto } from './dto/update-entreprise.dto';
 import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { Roles } from '../auth/decorators/roles.decorator';
-import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
+import { EntrepriseQueryDto } from './dto/entreprise-query.dto';
 
 interface AuthenticatedRequest extends ExpressRequest {
   user: AuthenticatedUser;
@@ -42,10 +42,9 @@ export class EntreprisesController {
   @Roles(Role.ADMIN)
   async findAll(
     @Request() req: AuthenticatedRequest,
-    @Query() { page = 1, limit = 10 }: PaginationQueryDto,
-    @Query('name') name?: string,
-    @Query('businessSector') businessSector?: string,
+    @Query() query: EntrepriseQueryDto,
   ) {
+    const { page = 1, limit = 10, name, businessSector } = query;
     return this.entreprisesService.findAll(req.user, page, limit, {
       name,
       businessSector,

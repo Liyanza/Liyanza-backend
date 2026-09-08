@@ -8,7 +8,7 @@ import {
 import { CampagnesService } from './campagnes.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
-import { CampaignStatus, Role } from '@prisma/client';
+import { BroadcastStatus, CampaignStatus, Role } from '@prisma/client';
 
 type MockedPrisma = {
   campaign: {
@@ -20,11 +20,25 @@ type MockedPrisma = {
     updateMany: jest.Mock;
     findUniqueOrThrow: jest.Mock;
   };
+  advertisingChannel: { count: jest.Mock };
+  broadcast: { count: jest.Mock; updateMany: jest.Mock };
+};
+
+/**
+ * Client transactionnel simulé, volontairement DISTINCT de `prisma` : si le
+ * service régresse et réutilise `this.prisma` à l'intérieur du callback
+ * `$transaction`, les assertions sur `txClient` échoueront — c'est exactement
+ * le défaut d'atomicité que le correctif d'audit vise à empêcher.
+ */
+type MockedTx = {
+  campaign: { updateMany: jest.Mock };
+  broadcast: { updateMany: jest.Mock };
 };
 
 describe('CampagnesService', () => {
   let service: CampagnesService;
   let prisma: MockedPrisma;
+  let txClient: MockedTx;
 
   const user: AuthenticatedUser = {
     userId: 'u1',
@@ -34,6 +48,11 @@ describe('CampagnesService', () => {
   };
 
   beforeEach(async () => {
+    txClient = {
+      campaign: { updateMany: jest.fn() },
+      broadcast: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         CampagnesService,
@@ -49,6 +68,20 @@ describe('CampagnesService', () => {
               updateMany: jest.fn(),
               findUniqueOrThrow: jest.fn(),
             },
+            // CORRECTIF AUDIT : la garde DRAFT -> PLANNED vérifie désormais
+            // que la campagne possède au moins un canal et un planning (la
+            // version précédente testait des invariants toujours vrais : du
+            // code mort intégral).
+            advertisingChannel: { count: jest.fn().mockResolvedValue(1) },
+            broadcast: {
+              count: jest.fn().mockResolvedValue(1),
+              updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+            },
+            // CORRECTIF AUDIT : `lancer()` propage désormais l'annulation aux
+            // diffisions encore planifiées, de façon atomique.
+            $transaction: jest.fn((cb: (tx: unknown) => unknown) =>
+              cb(txClient),
+            ),
           },
         },
       ],
@@ -123,9 +156,15 @@ describe('CampagnesService', () => {
         service.update('camp-1', { name: 'New' }, user),
       ).rejects.toThrow(ConflictException);
 
+      // Le prédicat multi-tenant est réaffirmé dans la clause d'écriture
+      // (défense en profondeur — correctif d'audit).
       expect(prisma.campaign.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: 'camp-1', status: CampaignStatus.DRAFT },
+          where: {
+            id: 'camp-1',
+            status: CampaignStatus.DRAFT,
+            launchedBy: { companyId: user.companyId },
+          },
         }),
       );
     });
@@ -171,21 +210,65 @@ describe('CampagnesService', () => {
 
     it('should throw ConflictException on a concurrent double transition (race condition fix)', async () => {
       prisma.campaign.findFirst.mockResolvedValue(plannedCampaign);
-      prisma.campaign.updateMany.mockResolvedValue({ count: 0 });
+      txClient.campaign.updateMany.mockResolvedValue({ count: 0 });
 
       await expect(
         service.lancer('camp-1', { status: CampaignStatus.IN_PROGRESS }, user),
       ).rejects.toThrow(ConflictException);
 
-      expect(prisma.campaign.updateMany).toHaveBeenCalledWith({
-        where: { id: 'camp-1', status: plannedCampaign.status },
+      expect(txClient.campaign.updateMany).toHaveBeenCalledWith({
+        where: {
+          id: 'camp-1',
+          status: plannedCampaign.status,
+          launchedBy: { companyId: user.companyId },
+        },
         data: { status: CampaignStatus.IN_PROGRESS },
       });
     });
 
+    // RÉGRESSION (majeur — transition sans effet de bord) : annuler une
+    // campagne n'écrivait QUE `Campaign.status`. Les diffusions restaient
+    // `PLANNED` et basculaient ensuite en « MISSED » dans le rapport de
+    // conformité, dégradant le taux d'une campagne pourtant annulée.
+    it('should cancel pending broadcasts when the campaign is cancelled', async () => {
+      prisma.campaign.findFirst.mockResolvedValue(plannedCampaign);
+      txClient.campaign.updateMany.mockResolvedValue({ count: 1 });
+      prisma.campaign.findUniqueOrThrow.mockResolvedValue({
+        ...plannedCampaign,
+        status: CampaignStatus.CANCELLED,
+      });
+
+      await service.lancer(
+        'camp-1',
+        { status: CampaignStatus.CANCELLED },
+        user,
+      );
+
+      expect(txClient.broadcast.updateMany).toHaveBeenCalledWith({
+        where: { campaignId: 'camp-1', status: BroadcastStatus.PLANNED },
+        data: { status: BroadcastStatus.CANCELLED },
+      });
+    });
+
+    // Les diffusions déjà constatées sont des faits : on ne réécrit pas
+    // l'historique lors d'une transition non destructrice.
+    it('should not touch broadcasts on a non-cancelling transition', async () => {
+      prisma.campaign.findFirst.mockResolvedValue(plannedCampaign);
+      txClient.campaign.updateMany.mockResolvedValue({ count: 1 });
+      prisma.campaign.findUniqueOrThrow.mockResolvedValue(plannedCampaign);
+
+      await service.lancer(
+        'camp-1',
+        { status: CampaignStatus.IN_PROGRESS },
+        user,
+      );
+
+      expect(txClient.broadcast.updateMany).not.toHaveBeenCalled();
+    });
+
     it('should transition successfully when no concurrent change occurred', async () => {
       prisma.campaign.findFirst.mockResolvedValue(plannedCampaign);
-      prisma.campaign.updateMany.mockResolvedValue({ count: 1 });
+      txClient.campaign.updateMany.mockResolvedValue({ count: 1 });
       const updated = {
         ...plannedCampaign,
         status: CampaignStatus.IN_PROGRESS,

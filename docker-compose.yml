@@ -40,11 +40,22 @@ services:
     ports:
       - '3000:3000'
     environment:
+      # CORRECTIF AUDIT (majeur — conteneur incapable de démarrer) : quatre
+      # variables déclarées `@IsDefined()` dans `src/config/env.validation.ts`
+      # étaient absentes de ce bloc : NODE_ENV, CORS_ORIGINS,
+      # JWT_VALIDATION_SECRET et VALIDATION_BASE_URL. La validation stricte au
+      # démarrage faisait donc échouer `docker compose up` systématiquement —
+      # l'environnement Docker documenté dans le README n'était pas
+      # fonctionnel.
+      NODE_ENV: ${NODE_ENV:-development}
       PORT: 3000
       # NOTE: En local via Docker Compose, on utilise le nom du service comme hostname
       DATABASE_URL: ${DATABASE_URL}
-      JWT_SECRET: ${JWT_SECRET}
       REDIS_URL: redis://redis:6379
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_VALIDATION_SECRET: ${JWT_VALIDATION_SECRET}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      VALIDATION_BASE_URL: ${VALIDATION_BASE_URL:-http://localhost:3000/validation}
     depends_on:
       postgres:
         condition: service_healthy

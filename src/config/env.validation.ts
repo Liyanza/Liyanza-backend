@@ -5,6 +5,8 @@ import {
   IsString,
   IsUrl,
   Min,
+  MinLength,
+  NotEquals,
   IsOptional,
   validateSync,
 } from 'class-validator';
@@ -31,8 +33,22 @@ export class EnvironmentVariables {
   REDIS_URL!: string;
 
   // Security (JWT)
+  //
+  // CORRECTIF AUDIT (majeur) : `@IsString()` seul acceptait `JWT_SECRET=x`.
+  // Un secret court est bruteforçable hors ligne à partir d'un unique token
+  // capturé ; l'attaquant peut alors forger un JWT arbitraire — `{"role":
+  // "ADMIN", "companyId": "<tenant cible>"}` — et compromettre l'intégralité
+  // de la plateforme. HS256 exige une clé d'au moins 256 bits (32 octets) ;
+  // on impose 32 caractères, et on refuse explicitement les valeurs
+  // d'exemple qui traînent dans les `.env` de développement.
   @IsDefined()
   @IsString()
+  @MinLength(32, {
+    message:
+      'JWT_SECRET must be at least 32 characters long (HS256 requires a 256-bit key).',
+  })
+  @NotEquals('supersecretkey')
+  @NotEquals('changeme')
   JWT_SECRET!: string;
 
   @IsOptional()
@@ -57,6 +73,9 @@ export class EnvironmentVariables {
 
   @IsDefined()
   @IsString()
+  @MinLength(32, {
+    message: 'JWT_VALIDATION_SECRET must be at least 32 characters long.',
+  })
   JWT_VALIDATION_SECRET!: string;
 
   @IsOptional()

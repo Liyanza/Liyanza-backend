@@ -6,6 +6,7 @@ import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
+import { LogoutDto } from './dto/logout.dto';
 import { Public } from './decorators/public.decorator';
 import { Roles } from './decorators/roles.decorator';
 import { AuthenticatedUser } from './interfaces/authenticated-user.interface';
@@ -44,10 +45,14 @@ export class AuthController {
   }
 
   // Protégé par le JwtAuthGuard global (aucun décorateur nécessaire).
+  //
+  // CORRECTIF AUDIT : le refresh token peut désormais être transmis pour ne
+  // fermer QUE la session courante (web ou mobile). S'il est omis, toutes les
+  // sessions de l'utilisateur sont révoquées — comportement « déconnexion de
+  // tous les appareils ».
   @Post('logout')
-  async logout(@Request() req: AuthenticatedRequest) {
-    const userId = req.user.userId;
-    return this.authService.logout(userId);
+  async logout(@Request() req: AuthenticatedRequest, @Body() dto: LogoutDto) {
+    return this.authService.logout(req.user.userId, dto.refreshToken);
   }
 
   /**

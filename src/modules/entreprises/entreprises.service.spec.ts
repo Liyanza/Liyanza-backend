@@ -33,13 +33,36 @@ describe('EntreprisesService', () => {
     deletedAt: null,
   };
 
+  /**
+   * Client transactionnel simulé, distinct de `prisma` : si le service
+   * régresse et réutilise `this.prisma` à l'intérieur du callback plutôt que
+   * le `tx` reçu, les assertions ci-dessous échoueront — c'est précisément le
+   * défaut d'atomicité que le correctif d'audit vise à empêcher.
+   */
+  let txClient: {
+    company: { create: jest.Mock };
+    user: { updateMany: jest.Mock };
+  };
+
   beforeEach(async () => {
+    txClient = {
+      company: { create: jest.fn() },
+      user: { updateMany: jest.fn() },
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         EntreprisesService,
         {
           provide: PrismaService,
           useValue: {
+            // CORRECTIF AUDIT : la création d'entreprise + promotion ADMIN
+            // du créateur s'exécute désormais dans une transaction. Mock
+            // callback-style fidèle au comportement réel de Prisma : le
+            // callback reçoit un client transactionnel `tx` distinct.
+            $transaction: jest.fn((cb: (tx: unknown) => unknown) =>
+              cb(txClient),
+            ),
             company: {
               create: jest.fn(),
               findFirst: jest.fn(),
@@ -68,18 +91,36 @@ describe('EntreprisesService', () => {
       };
       const user = { ...mockUser, companyId: null };
 
-      (prisma.company.create as jest.Mock).mockResolvedValue({
-        ...mockCompany,
-        ...dto,
-      });
-      (prisma.user.update as jest.Mock).mockResolvedValue({} as any);
+      txClient.company.create.mockResolvedValue({ ...mockCompany, ...dto });
+      txClient.user.updateMany.mockResolvedValue({ count: 1 });
 
       const result = await service.create(dto, user);
+
       expect(result).toMatchObject(dto);
-      expect(prisma.user.update).toHaveBeenCalledWith({
-        where: { id: user.userId },
+      // Le rattachement est conditionné à `companyId: null` : c'est le verrou
+      // qui empêche deux requêtes concurrentes de créer deux entreprises.
+      expect(txClient.user.updateMany).toHaveBeenCalledWith({
+        where: { id: user.userId, companyId: null },
         data: { companyId: mockCompany.id, role: Role.ADMIN },
       });
+    });
+
+    // RÉGRESSION (race condition) : si l'utilisateur a été rattaché à une
+    // entreprise entre-temps, la transaction doit être annulée — sans quoi
+    // une entreprise orpheline, sans aucun administrateur, reste en base.
+    it('should roll back when the user was linked to a company concurrently', async () => {
+      const dto = {
+        name: 'New Co',
+        businessSector: 'Agri',
+        address: 'Yaoundé',
+      };
+
+      txClient.company.create.mockResolvedValue(mockCompany);
+      txClient.user.updateMany.mockResolvedValue({ count: 0 });
+
+      await expect(
+        service.create(dto, { ...mockUser, companyId: null }),
+      ).rejects.toThrow(ConflictException);
     });
 
     it('should throw ConflictException if user already has a company', async () => {

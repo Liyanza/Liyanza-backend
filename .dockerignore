@@ -1,0 +1,51 @@
+# CORRECTIF AUDIT (majeur — exposition de secrets)
+#
+# Un fichier `.dockerignore` existait bien dans le dépôt... mais dans `src/`.
+# Docker ne lit CE fichier qu'à la racine du contexte de build : celui de
+# `src/` n'a donc jamais eu le moindre effet.
+#
+# Conséquence : le `COPY . .` du Dockerfile embarquait dans le layer du stage
+# `builder` le fichier `.env` de la machine de build — contenant JWT_SECRET,
+# JWT_VALIDATION_SECRET et la chaîne DATABASE_URL avec son mot de passe — ainsi
+# que tout l'historique `.git`. Le stage `runner` ne recopie pas `.env`, mais
+# les layers du builder restent lisibles dans le cache de build local, dans un
+# registre si l'image intermédiaire est poussée (courant avec BuildKit et
+# `--cache-to`), et via `docker history` / extraction de layer.
+
+# Secrets & configuration locale
+.env
+.env.*
+!.env.example
+
+# Dépendances et artefacts régénérés dans l'image
+node_modules
+dist
+coverage
+*.tsbuildinfo
+
+# Historique et métadonnées de dépôt
+.git
+.gitignore
+.github
+.husky
+
+# Outillage de développement
+.vscode
+.windsurf
+.claude
+.editorconfig
+.prettierrc
+eslint.config.mjs
+commitlint.config.js
+
+# Tests (non nécessaires à l'exécution)
+test
+**/*.spec.ts
+
+# Divers
+npm-debug.log*
+Dockerfile
+docker-compose.yml
+README.md
+CONTRIBUTING.md
+docs

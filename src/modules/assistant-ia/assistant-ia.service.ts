@@ -13,6 +13,9 @@ import { EnvoyerMessageDto } from './dto/envoyer-message.dto';
 import { IA_ENGINE_TOKEN } from './clients/ia-engine.interface';
 import type { IAEngineInterface } from './clients/ia-engine.interface';
 
+/** Nombre maximal de messages renvoyés par `getConversation`. */
+const MAX_CONVERSATION_MESSAGES = 200;
+
 @Injectable()
 export class AssistantIService {
   constructor(
@@ -121,11 +124,19 @@ export class AssistantIService {
   // 3. Get conversation history
   // --------------------------------------------------------------
   async getConversation(conversationId: string, user: AuthenticatedUser) {
+    // CORRECTIF AUDIT (majeur — DoS) : `messages` était chargé sans aucune
+    // borne. Une conversation longue (chaque échange produisant deux
+    // `AiMessage` de 5 000 caractères — cf. `EnvoyerMessageDto`) était
+    // intégralement matérialisée en mémoire puis sérialisée en JSON à chaque
+    // consultation. Quelques milliers de messages suffisent à saturer le heap
+    // d'une tâche Fargate. On borne aux 200 derniers messages, renvoyés dans
+    // l'ordre chronologique attendu par le client.
     const conversation = await this.prisma.aiConversation.findUnique({
       where: { id: conversationId },
       include: {
         messages: {
-          orderBy: { sentAt: 'asc' },
+          orderBy: { sentAt: 'desc' },
+          take: MAX_CONVERSATION_MESSAGES,
         },
       },
     });
@@ -133,7 +144,13 @@ export class AssistantIService {
       throw new NotFoundException('Conversation not found.');
     }
     assertSameCompany(user, conversation.companyId, 'Conversation');
-    return conversation;
+
+    // `take` impose un tri décroissant pour récupérer les plus récents ;
+    // le client attend l'ordre chronologique.
+    return {
+      ...conversation,
+      messages: [...conversation.messages].reverse(),
+    };
   }
 
   // --------------------------------------------------------------

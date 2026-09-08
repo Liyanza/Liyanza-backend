@@ -22,6 +22,8 @@ import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
 import { RolesGuard } from './modules/auth/guards/roles.guard';
 import { RequestIdMiddleware } from './common/middleware/request-id.middleware';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
+import { RedisThrottlerStorage } from './common/throttler/redis-throttler.storage';
+import { RedisService } from './modules/redis/redis.service';
 import { CanauxModule } from './modules/canaux/canaux.module';
 import { DiffusionsModule } from './modules/diffusions/diffusions.module';
 import { PrestationsModule } from './modules/prestations/prestations.module';
@@ -42,13 +44,20 @@ import { QueueModule } from './modules/queue/queue.module';
     // minute / IP sur l'ensemble de l'API. Des limites plus strictes sont
     // appliquées spécifiquement sur `/auth/login`, `/auth/register` et
     // `/auth/refresh` via `@Throttle(...)` (voir `AuthController`).
-    ThrottlerModule.forRoot([
-      {
-        name: 'default',
-        ttl: 60_000,
-        limit: 20,
-      },
-    ]),
+    //
+    // CORRECTIF AUDIT (majeur) : le stockage par défaut est EN MÉMOIRE, donc
+    // local à chaque instance. Derrière l'ALB de l'architecture cible (ECS
+    // Fargate, N tâches), la limite réelle était de N × la limite annoncée et
+    // repartait de zéro à chaque redéploiement. On bascule sur un stockage
+    // Redis partagé — voir `RedisThrottlerStorage`.
+    ThrottlerModule.forRootAsync({
+      imports: [RedisModule],
+      inject: [RedisService],
+      useFactory: (redis: RedisService) => ({
+        throttlers: [{ name: 'default', ttl: 60_000, limit: 20 }],
+        storage: new RedisThrottlerStorage(redis),
+      }),
+    }),
     LoggerModule,
     HealthModule,
     PrismaModule,

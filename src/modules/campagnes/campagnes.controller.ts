@@ -11,14 +11,14 @@ import {
   HttpStatus,
 } from '@nestjs/common';
 import { Request as ExpressRequest } from 'express';
-import { Role, CampaignStatus } from '@prisma/client';
+import { Role } from '@prisma/client';
 import { CampagnesService } from './campagnes.service';
 import { CreateCampagneDto } from './dto/create-campagne.dto';
 import { UpdateCampagneDto } from './dto/update-campagne.dto';
 import { LancerCampagneDto } from './dto/lancer-campagne.dto';
 import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { Roles } from '../auth/decorators/roles.decorator';
-import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
+import { CampagneQueryDto } from './dto/campagne-query.dto';
 
 interface AuthenticatedRequest extends ExpressRequest {
   user: AuthenticatedUser;
@@ -42,9 +42,9 @@ export class CampagnesController {
   @Roles(Role.ADMIN, Role.MARKETING_MANAGER)
   async findAll(
     @Request() req: AuthenticatedRequest,
-    @Query() { page = 1, limit = 10 }: PaginationQueryDto,
-    @Query('status') status?: CampaignStatus,
+    @Query() query: CampagneQueryDto,
   ) {
+    const { page = 1, limit = 10, status } = query;
     return this.campagnesService.findAll(req.user, page, limit, status);
   }
 

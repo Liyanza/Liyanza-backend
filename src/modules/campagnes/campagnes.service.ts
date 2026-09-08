@@ -10,7 +10,12 @@ import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interfa
 import { CreateCampagneDto } from './dto/create-campagne.dto';
 import { UpdateCampagneDto } from './dto/update-campagne.dto';
 import { LancerCampagneDto } from './dto/lancer-campagne.dto';
-import { CampaignStatus, Prisma, Campaign } from '@prisma/client';
+import {
+  BroadcastStatus,
+  CampaignStatus,
+  Prisma,
+  Campaign,
+} from '@prisma/client';
 import { CampaignStateMachine } from './state/campaign-state-machine';
 
 @Injectable()
@@ -169,8 +174,13 @@ export class CampagnesService {
       throw new BadRequestException('Only DRAFT campaigns can be updated.');
     }
 
-    // Prepare update data
-    const updateData: Prisma.CampaignUpdateInput = {};
+    // CORRECTIF AUDIT (mineur — typage) : `Prisma.CampaignUpdateInput` est le
+    // type d'entrée de `campaign.update()`, pas de `campaign.updateMany()` qui
+    // attend `CampaignUpdateManyMutationInput`. Le premier autorise les champs
+    // de relation (`launchedBy`, `channels`, `broadcasts`...) que `updateMany`
+    // ne sait pas traiter : le compilateur validait donc un payload que Prisma
+    // aurait rejeté à l'exécution.
+    const updateData: Prisma.CampaignUpdateManyMutationInput = {};
     if (dto.name) updateData.name = dto.name;
     if (dto.objective) updateData.objective = dto.objective;
     if (dto.plannedBudget !== undefined) {
@@ -202,13 +212,24 @@ export class CampagnesService {
     // statut est toujours DRAFT au moment de l'écriture ; sinon `count`
     // vaut 0 et on renvoie une erreur explicite plutôt qu'un résultat
     // silencieusement incohérent.
+    // CORRECTIF AUDIT (complément) : le prédicat multi-tenant
+    // (`launchedBy: { companyId }`), présent dans la lecture, était absent de
+    // l'écriture. Le `findFirst` ci-dessus le rend non exploitable AUJOURD'HUI,
+    // mais toute réorganisation ultérieure de cette méthode (early return,
+    // extraction d'un helper, mise en cache de la lecture) transformerait
+    // l'omission en IDOR inter-tenant silencieux. On réaffirme le scope dans
+    // la clause d'écriture : défense en profondeur, coût nul.
     const result = await this.prisma.campaign.updateMany({
-      where: { id, status: CampaignStatus.DRAFT },
+      where: {
+        id,
+        status: CampaignStatus.DRAFT,
+        launchedBy: { companyId: user.companyId },
+      },
       data: updateData,
     });
     if (result.count === 0) {
       throw new ConflictException(
-        'Le statut de la campagne a changé entre-temps, veuillez réessayer.',
+        'The campaign status has changed in the meantime, please try again.',
       );
     }
 
@@ -241,58 +262,116 @@ export class CampagnesService {
     // Validate the transition
     CampaignStateMachine.validateTransition(campaign.status, dto.status);
 
-    // If transitioning from DRAFT to PLANNED, ensure required fields are filled
+    // If transitioning from DRAFT to PLANNED, ensure the campaign is complete
     if (
       campaign.status === CampaignStatus.DRAFT &&
       dto.status === CampaignStatus.PLANNED
     ) {
-      this.validateCampaignComplete(campaign);
+      await this.validateCampaignComplete(campaign);
     }
 
     // Perform the update
     // CORRECTIF AUDIT (mineur — race condition / TOCTOU) : même principe
     // que dans `update()` — on ne transitionne que si le statut lu est
     // toujours celui observé au moment de la validation.
-    const result = await this.prisma.campaign.updateMany({
-      where: { id, status: campaign.status },
-      data: { status: dto.status },
+    //
+    // CORRECTIF AUDIT (majeur — transition sans effet de bord) : annuler une
+    // campagne n'écrivait QUE `Campaign.status`. Les `Broadcast` rattachés
+    // restaient au statut `PLANNED` : le rapport de conformité continuait de
+    // les comptabiliser puis de les basculer en « MISSED » une fois leur date
+    // passée, dégradant le taux de conformité d'une campagne pourtant
+    // annulée. L'enum `BroadcastStatus.CANCELLED` existait dans le schéma
+    // mais n'était écrite nulle part dans tout `src/`.
+    //
+    // Le changement de statut et sa propagation doivent être atomiques : sans
+    // transaction, un échec après le premier `UPDATE` laisserait une campagne
+    // annulée avec des diffusions toujours actives.
+    await this.prisma.$transaction(async (tx) => {
+      const result = await tx.campaign.updateMany({
+        where: {
+          id,
+          status: campaign.status,
+          launchedBy: { companyId: user.companyId },
+        },
+        data: { status: dto.status },
+      });
+      if (result.count === 0) {
+        throw new ConflictException(
+          'The campaign status has changed in the meantime, please try again.',
+        );
+      }
+
+      if (dto.status === CampaignStatus.CANCELLED) {
+        // Seules les diffusions encore à venir sont annulées : celles déjà
+        // constatées (BROADCASTED) sont des faits, on ne réécrit pas
+        // l'historique.
+        await tx.broadcast.updateMany({
+          where: { campaignId: id, status: BroadcastStatus.PLANNED },
+          data: { status: BroadcastStatus.CANCELLED },
+        });
+      }
     });
-    if (result.count === 0) {
-      throw new ConflictException(
-        'Le statut de la campagne a changé entre-temps, veuillez réessayer.',
-      );
-    }
 
     return this.prisma.campaign.findUniqueOrThrow({ where: { id } });
   }
 
   /**
-   * Validate that startDate <= endDate.
+   * Valide la cohérence de la fenêtre temporelle d'une campagne.
+   *
+   * CORRECTIF AUDIT (mineur) : seul `startDate > endDate` était rejeté. Une
+   * campagne de durée nulle (`startDate === endDate`) était donc acceptée,
+   * de même qu'une campagne dont la fenêtre était entièrement dans le passé —
+   * y compris à la création. Ces deux cas rendent impossible toute
+   * planification de diffusion cohérente en aval.
    */
   private validateDates(startDate: Date, endDate: Date): void {
-    if (startDate > endDate) {
-      throw new BadRequestException('Start date cannot be after end date.');
+    if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
+      throw new BadRequestException('Invalid campaign dates.');
+    }
+    if (startDate >= endDate) {
+      throw new BadRequestException('End date must be after start date.');
     }
   }
 
   /**
-   * Validate that a campaign has all required fields before transitioning to PLANNED.
+   * Vérifie qu'une campagne est réellement prête à passer de DRAFT à PLANNED.
+   *
+   * CORRECTIF AUDIT (majeur — garde inopérante) : la version précédente
+   * testait la présence de `name`, `objective`, `startDate`, `endDate` et un
+   * budget strictement positif. AUCUNE de ces cinq conditions ne pouvait être
+   * fausse : les quatre premiers champs sont NOT NULL en base
+   * (prisma/schema.prisma) et `@IsNotEmpty()` dans `CreateCampagneDto` ;
+   * `update()` ne permet jamais de les vider (`if (dto.name)` ignore la chaîne
+   * vide) ; et `plannedBudget` est borné par `@Min(0.01)`. La méthode était
+   * donc du code mort intégral : la porte DRAFT -> PLANNED ne validait rien.
+   *
+   * On la remplace par les invariants métier qui, eux, peuvent réellement être
+   * violés : une campagne ne peut être planifiée sans canal de diffusion ni
+   * planning, et sa fenêtre doit encore avoir un sens au moment du passage.
    */
-  private validateCampaignComplete(campaign: Campaign): void {
-    if (!campaign.name) {
-      throw new BadRequestException('Campaign name is required.');
+  private async validateCampaignComplete(campaign: Campaign): Promise<void> {
+    if (campaign.endDate <= new Date()) {
+      throw new BadRequestException(
+        'Cannot plan a campaign whose end date has already passed.',
+      );
     }
-    if (!campaign.objective) {
-      throw new BadRequestException('Campaign objective is required.');
+
+    const [channelCount, broadcastCount] = await Promise.all([
+      this.prisma.advertisingChannel.count({
+        where: { campaignId: campaign.id },
+      }),
+      this.prisma.broadcast.count({ where: { campaignId: campaign.id } }),
+    ]);
+
+    if (channelCount === 0) {
+      throw new BadRequestException(
+        'Cannot plan a campaign without any advertising channel. Associate at least one channel first.',
+      );
     }
-    if (!campaign.startDate) {
-      throw new BadRequestException('Campaign start date is required.');
-    }
-    if (!campaign.endDate) {
-      throw new BadRequestException('Campaign end date is required.');
-    }
-    if (campaign.plannedBudget.lte(0)) {
-      throw new BadRequestException('Campaign planned budget must be > 0.');
+    if (broadcastCount === 0) {
+      throw new BadRequestException(
+        'Cannot plan a campaign without any scheduled broadcast. Create the broadcast schedule first.',
+      );
     }
   }
 }

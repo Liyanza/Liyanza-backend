@@ -1,8 +1,8 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment */
 import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import type { StringValue } from 'ms';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtStrategy } from './strategies/jwt.strategy';
@@ -15,14 +15,20 @@ import { RedisModule } from '../redis/redis.module';
 @Module({
   imports: [
     PassportModule,
+    // CORRECTIF AUDIT (mineur — typage & duplication de configuration) :
+    // le `as any` masquait l'incompatibilité de type entre `string` et le
+    // type `StringValue` attendu par `jsonwebtoken`, désactivant au passage
+    // toute vérification sur l'objet `signOptions`. On type explicitement, et
+    // on consomme le namespace `jwt` (src/config/jwt.config.ts) qui était
+    // jusqu'ici chargé mais jamais lu — deux sources de vérité coexistaient.
     JwtModule.registerAsync({
       imports: [ConfigModule],
       useFactory: (configService: ConfigService) => ({
-        secret: configService.get<string>('JWT_SECRET'),
+        secret: configService.get<string>('jwt.secret'),
         signOptions: {
-          expiresIn:
-            configService.get<string>('JWT_ACCESS_EXPIRATION') || '15m',
-        } as any,
+          expiresIn: (configService.get<string>('jwt.accessExpiration') ??
+            '15m') as StringValue,
+        },
       }),
       inject: [ConfigService],
     }),

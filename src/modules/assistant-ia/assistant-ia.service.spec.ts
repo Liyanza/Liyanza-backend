@@ -220,10 +220,18 @@ describe('AssistantIService', () => {
       prisma.aiConversation.findUnique.mockResolvedValue(expected);
 
       const result = await service.getConversation(conversationId, mockUser);
-      expect(result).toEqual(expected);
+
+      // CORRECTIF AUDIT : l'historique est désormais borné (`take`) pour ne
+      // plus charger une conversation entière en mémoire. `take` impose un
+      // tri décroissant côté base ; le service ré-inverse pour restituer
+      // l'ordre chronologique attendu par le client.
+      expect(result).toEqual({
+        ...expected,
+        messages: [...expected.messages].reverse(),
+      });
       expect(prisma.aiConversation.findUnique).toHaveBeenCalledWith({
         where: { id: conversationId },
-        include: { messages: { orderBy: { sentAt: 'asc' } } },
+        include: { messages: { orderBy: { sentAt: 'desc' }, take: 200 } },
       });
     });
 

@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/unbound-method */
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConflictException, NotFoundException } from '@nestjs/common';
 import { DiffusionsService } from './diffusions.service';
@@ -46,7 +47,12 @@ describe('DiffusionsService', () => {
           useValue: {
             broadcast: {
               findUnique: jest.fn(),
-              update: jest.fn(),
+              // CORRECTIF AUDIT : `update` est remplacé par un `updateMany`
+              // conditionné à `actualBroadcastAt: null` (verrou optimiste
+              // contre la double soumission de constat), suivi d'une
+              // relecture par `findUniqueOrThrow`.
+              updateMany: jest.fn(),
+              findUniqueOrThrow: jest.fn(),
               findMany: jest.fn(),
             },
             campaign: {
@@ -77,7 +83,10 @@ describe('DiffusionsService', () => {
       (prisma.broadcast.findUnique as jest.Mock).mockResolvedValue(
         broadcastWithCampaign,
       );
-      (prisma.broadcast.update as jest.Mock).mockResolvedValue({
+      (prisma.broadcast.updateMany as jest.Mock).mockResolvedValue({
+        count: 1,
+      });
+      (prisma.broadcast.findUniqueOrThrow as jest.Mock).mockResolvedValue({
         ...broadcastWithCampaign,
         actualBroadcastAt: new Date(dto.actualBroadcastAt),
         audioProof: dto.audioProof,
@@ -85,9 +94,40 @@ describe('DiffusionsService', () => {
       });
 
       const result = await service.updateConstat('broadcast-1', dto, mockUser);
+
       expect(result.actualBroadcastAt).toEqual(new Date(dto.actualBroadcastAt));
       expect(result.audioProof).toBe(dto.audioProof);
       expect(result.status).toBe(BroadcastStatus.BROADCASTED);
+      // Verrou optimiste : l'écriture n'a lieu que si aucun constat n'a été
+      // enregistré entre-temps.
+      expect(prisma.broadcast.updateMany).toHaveBeenCalledWith({
+        where: { id: 'broadcast-1', actualBroadcastAt: null },
+        data: expect.objectContaining({
+          status: BroadcastStatus.BROADCASTED,
+        }) as unknown,
+      });
+    });
+
+    // RÉGRESSION (majeur — TOCTOU) : deux requêtes concurrentes lisaient
+    // toutes deux `actualBroadcastAt === null` et écrasaient successivement
+    // le constat, la seconde détruisant silencieusement la preuve audio de
+    // la première.
+    it('should throw ConflictException when a concurrent constat won the race', async () => {
+      (prisma.broadcast.findUnique as jest.Mock).mockResolvedValue({
+        ...mockBroadcast,
+        campaign: { id: 'campaign-1', launchedBy: { companyId: 'company-1' } },
+      });
+      (prisma.broadcast.updateMany as jest.Mock).mockResolvedValue({
+        count: 0,
+      });
+
+      await expect(
+        service.updateConstat(
+          'broadcast-1',
+          { actualBroadcastAt: '2026-09-01T10:05:00Z' },
+          mockUser,
+        ),
+      ).rejects.toThrow(ConflictException);
     });
 
     it('should throw ConflictException if already constat exists', async () => {

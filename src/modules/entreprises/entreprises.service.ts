@@ -27,26 +27,49 @@ export class EntreprisesService {
       );
     }
 
-    // Create the company
-    const company = await this.prisma.company.create({
-      data: {
-        name: createDto.name,
-        businessSector: createDto.businessSector,
-        address: createDto.address,
-        // deletedAt defaults to null
-      },
-    });
+    // CORRECTIF AUDIT (majeur — atomicité) : la création de l'entreprise et
+    // la promotion de son créateur en ADMIN étaient deux écritures séparées,
+    // hors transaction. Si la seconde échouait (indisponibilité, contention,
+    // redéploiement au mauvais moment), l'entreprise restait créée SANS aucun
+    // administrateur et son créateur sans rattachement : un tenant orphelin,
+    // définitivement inaccessible et impossible à réparer par l'API — le
+    // contrôle `if (user.companyId)` en tête de méthode empêchant l'appelant
+    // de retenter l'opération n'est même pas déclenché, mais l'entreprise
+    // fantôme demeure en base.
+    //
+    // CORRECTIF AUDIT (race condition) : le contrôle `user.companyId` porte
+    // sur le JWT. Deux requêtes concurrentes du même utilisateur le
+    // passaient toutes deux et créaient deux entreprises. On revérifie donc
+    // l'appartenance en base, à l'intérieur de la transaction, et l'écriture
+    // du rattachement est conditionnée à `companyId: null`.
+    return this.prisma.$transaction(async (tx) => {
+      const company = await tx.company.create({
+        data: {
+          name: createDto.name,
+          businessSector: createDto.businessSector,
+          address: createDto.address,
+          // deletedAt defaults to null
+        },
+      });
 
-    // Update the user: link to the new company and promote to ADMIN
-    await this.prisma.user.update({
-      where: { id: user.userId },
-      data: {
-        companyId: company.id,
-        role: Role.ADMIN,
-      },
-    });
+      const linked = await tx.user.updateMany({
+        where: { id: user.userId, companyId: null },
+        data: {
+          companyId: company.id,
+          role: Role.ADMIN,
+        },
+      });
 
-    return company;
+      if (linked.count === 0) {
+        // L'utilisateur a été rattaché à une entreprise entre-temps : on
+        // annule tout, y compris la création ci-dessus.
+        throw new ConflictException(
+          'You already belong to a company. You cannot create another one.',
+        );
+      }
+
+      return company;
+    });
   }
 
   /**

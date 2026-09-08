@@ -202,7 +202,11 @@ export class PrestationsService {
       throw new ForbiddenException('Insufficient role to update status.');
     }
 
-    if (installation.status === dto.status) {
+    // `Installation.status` est une colonne `String` libre côté Prisma, tandis
+    // que le DTO est désormais contraint par l'enum `InstallationStatus`
+    // (correctif d'audit). La comparaison se fait donc explicitement sur des
+    // chaînes tant que la migration du schéma n'a pas été appliquée.
+    if (installation.status === (dto.status as string)) {
       return installation;
     }
 
