@@ -167,6 +167,21 @@ export class EnvironmentVariables {
   @IsOptional()
   @IsIn(['true', 'false'])
   S3_FORCE_PATH_STYLE?: string;
+
+  /**
+   * Secret partagé protégeant `POST /internal/monitoring/detections`
+   * (BACK-304) — remplace le mécanisme VPC prévu par la roadmap d'origine,
+   * inapplicable sur Render. Même rigueur que `JWT_SECRET` : ce token
+   * autorise l'écriture de constats de diffusion sans utilisateur
+   * authentifié, un secret faible serait bruteforçable.
+   */
+  @IsDefined()
+  @IsString()
+  @MinLength(32, {
+    message: 'INTERNAL_MONITORING_TOKEN must be at least 32 characters long.',
+  })
+  @NotEquals('changeme')
+  INTERNAL_MONITORING_TOKEN!: string;
 }
 
 export function validate(config: Record<string, unknown>) {

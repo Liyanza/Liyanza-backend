@@ -45,8 +45,26 @@ export class DiffusionsService {
       'Broadcast',
     );
 
+    return this.applyConstat(id, dto);
+  }
+
+  /**
+   * Cœur idempotent (verrou optimiste) de l'enregistrement d'un constat de
+   * diffusion — sans vérification multi-tenant. Extrait de `updateConstat`
+   * (BACK-304) pour être réutilisé par le webhook interne de monitoring
+   * (`MonitoringService`), qui agit sur la base d'un secret partagé
+   * (`X-Internal-Token`) plutôt que d'un utilisateur authentifié : il n'y a
+   * donc pas de `companyId` à comparer. `updateConstat` reste le seul point
+   * d'entrée qui vérifie l'isolation multi-tenant, en amont de cet appel.
+   */
+  async applyConstat(id: string, dto: UpdateDiffusionReelleDto) {
+    const exists = await this.prisma.broadcast.findUnique({ where: { id } });
+    if (!exists) {
+      throw new NotFoundException('Broadcast not found.');
+    }
+
     // Idempotence: prevent double update
-    if (broadcast.actualBroadcastAt) {
+    if (exists.actualBroadcastAt) {
       throw new ConflictException(
         'A constat has already been recorded for this broadcast.',
       );

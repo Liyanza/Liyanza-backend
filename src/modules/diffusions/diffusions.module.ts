@@ -7,5 +7,6 @@ import { PrismaModule } from '../prisma/prisma.module';
   imports: [PrismaModule],
   controllers: [DiffusionsController],
   providers: [DiffusionsService],
+  exports: [DiffusionsService], // ← BACK-304 : réutilisé par MonitoringModule
 })
 export class DiffusionsModule {}
