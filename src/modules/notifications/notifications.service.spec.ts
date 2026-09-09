@@ -1,10 +1,10 @@
 /* eslint-disable @typescript-eslint/unbound-method */
-/* eslint-disable @typescript-eslint/no-unsafe-assignment */
 
 import { Test, TestingModule } from '@nestjs/testing';
 import { NotFoundException } from '@nestjs/common';
 import { NotificationsService } from './notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { QueueService } from '../queue/queue.service';
 import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { Role } from '@prisma/client';
 import { NotificationType } from './dto/create-notification.dto';
@@ -12,6 +12,7 @@ import { NotificationType } from './dto/create-notification.dto';
 describe('NotificationsService', () => {
   let service: NotificationsService;
   let prisma: jest.Mocked<PrismaService>;
+  let queueService: jest.Mocked<QueueService>;
 
   const mockUser: AuthenticatedUser = {
     userId: 'user-1',
@@ -46,55 +47,40 @@ describe('NotificationsService', () => {
             },
           },
         },
+        {
+          provide: QueueService,
+          useValue: {
+            addJob: jest.fn(),
+          },
+        },
       ],
     }).compile();
 
     service = module.get<NotificationsService>(NotificationsService);
     prisma = module.get(PrismaService);
+    queueService = module.get(QueueService);
   });
 
+  // BACK-210/BACK-302 : `creer()` n'écrit plus directement en base — elle
+  // enfile un job sur la file `notifications`, consommé de façon asynchrone
+  // par `NotificationsProcessor` (voir processors/notifications.processor.spec.ts).
   describe('creer', () => {
-    it('should create a notification with correct data', async () => {
+    it('should enqueue a "create" job on the notifications queue instead of writing directly', async () => {
       const dto = {
         title: 'Test',
         message: 'Message',
         type: NotificationType.INFO,
         recipientId: 'user-1',
       };
-      (prisma.notification.create as jest.Mock).mockResolvedValue(
-        mockNotification,
-      );
-
-      const result = await service.creer(dto);
-      expect(result).toEqual(mockNotification);
-      expect(prisma.notification.create).toHaveBeenCalledWith({
-        data: {
-          title: dto.title,
-          message: dto.message,
-          type: dto.type,
-          sentAt: expect.any(Date) as Date,
-          readStatus: 'UNREAD',
-          recipientId: dto.recipientId,
-        },
-      });
-    });
-
-    it('should default type to INFO if not provided', async () => {
-      const dto = {
-        title: 'Test',
-        message: 'Message',
-        recipientId: 'user-1',
-      };
-      (prisma.notification.create as jest.Mock).mockResolvedValue(
-        mockNotification,
-      );
 
       await service.creer(dto);
-      expect(prisma.notification.create).toHaveBeenCalledWith({
-        data: expect.objectContaining({
-          type: NotificationType.INFO,
-        }),
-      });
+
+      expect(queueService.addJob).toHaveBeenCalledWith(
+        'notifications',
+        'create',
+        dto,
+      );
+      expect(prisma.notification.create).not.toHaveBeenCalled();
     });
   });
 

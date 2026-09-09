@@ -33,6 +33,27 @@ services:
     networks:
       - liyanza_network
 
+  # Serveur SMTP de développement (BACK-302) : capture les emails envoyés par
+  # NotificationsProcessor sans les délivrer réellement, consultables sur
+  # http://localhost:8025. N'est utilisé qu'en local — Render pointera vers
+  # un vrai relais SMTP via les variables d'environnement du dashboard.
+  #
+  # CORRECTIF : `mailhog/mailhog` (projet MailHog original) est archivé/non
+  # maintenu et son image `v1.0.1` sur Docker Hub est cassée (démarrage en
+  # échec : `unable to find user mailhog: no matching entries in passwd
+  # file`). Remplacé par Mailpit, le successeur actif recommandé par la
+  # communauté MailHog elle-même — même usage, mêmes ports (1025 SMTP, 8025
+  # UI web), aucun changement côté `SmtpEmailProvider`.
+  mailhog:
+    image: axllent/mailpit:v1.20.4
+    container_name: liyanza_mailhog
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:1025:1025'
+      - '127.0.0.1:8025:8025'
+    networks:
+      - liyanza_network
+
   api:
     build: .
     container_name: liyanza_api
@@ -57,11 +78,18 @@ services:
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
       VALIDATION_BASE_URL: ${VALIDATION_BASE_URL:-http://localhost:3000/validation}
       QR_CODE_BASE_URL: ${QR_CODE_BASE_URL:-http://localhost:3000}
+      SMTP_HOST: ${SMTP_HOST:-mailhog}
+      SMTP_PORT: ${SMTP_PORT:-1025}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-notifications@liyanza.local}
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+      mailhog:
+        condition: service_started
     networks:
       - liyanza_network
 

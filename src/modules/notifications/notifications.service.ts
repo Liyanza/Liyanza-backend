@@ -4,27 +4,25 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { CreateNotificationDto } from './dto/create-notification.dto';
 import { NotificationQueryDto } from './dto/notification-query.dto';
+import { QueueService } from '../queue/queue.service';
 
 @Injectable()
 export class NotificationsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private queueService: QueueService,
+  ) {}
 
   /**
-   * Creates a notification and persists it in the database.
-   * This method is intended to be reused by other modules (Phase 3 will handle actual sending).
-   * The recipient is always resolved from the DTO - never from the request user blindly.
+   * Enfile la création de la notification sur la file `notifications`
+   * (BACK-210/BACK-302) au lieu d'écrire en direct via Prisma : la
+   * persistance in-app et l'envoi de l'email associé sont désormais gérés
+   * par `NotificationsProcessor`, en dehors du chemin de requête synchrone.
+   * Le destinataire est toujours résolu depuis le DTO — jamais depuis
+   * l'utilisateur de la requête.
    */
-  async creer(dto: CreateNotificationDto) {
-    return this.prisma.notification.create({
-      data: {
-        title: dto.title,
-        message: dto.message,
-        type: dto.type ?? 'INFO',
-        sentAt: new Date(),
-        readStatus: 'UNREAD',
-        recipientId: dto.recipientId,
-      },
-    });
+  async creer(dto: CreateNotificationDto): Promise<void> {
+    await this.queueService.addJob('notifications', 'create', dto);
   }
 
   /**

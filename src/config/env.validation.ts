@@ -1,6 +1,7 @@
 import { plainToInstance } from 'class-transformer';
 import {
   IsDefined,
+  IsEmail,
   IsNumber,
   IsString,
   IsUrl,
@@ -95,6 +96,35 @@ export class EnvironmentVariables {
   @IsDefined()
   @IsUrl({ require_tld: false, protocols: ['http', 'https'] })
   QR_CODE_BASE_URL!: string;
+
+  /**
+   * SMTP (BACK-302 — worker de notifications async, canal email). Aucune
+   * valeur par défaut : un secret/hôte manquant doit faire échouer le
+   * démarrage plutôt que d'envoyer silencieusement des emails vers un
+   * relais mal configuré. `SMTP_USER`/`SMTP_PASSWORD` peuvent être une
+   * chaîne vide en développement local (ex: Mailhog, qui n'exige pas
+   * d'authentification) — seule leur absence est rejetée.
+   */
+  @IsDefined()
+  @IsString()
+  SMTP_HOST!: string;
+
+  @IsDefined()
+  @IsNumber()
+  @Min(1)
+  SMTP_PORT!: number;
+
+  @IsDefined()
+  @IsString()
+  SMTP_USER!: string;
+
+  @IsDefined()
+  @IsString()
+  SMTP_PASSWORD!: string;
+
+  @IsDefined()
+  @IsEmail()
+  SMTP_FROM!: string;
 }
 
 export function validate(config: Record<string, unknown>) {
