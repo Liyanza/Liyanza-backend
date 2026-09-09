@@ -34,6 +34,7 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
 import { QueueModule } from './modules/queue/queue.module';
 import { TasksModule } from './modules/tasks/tasks.module';
 import { QrCodeModule } from './modules/qr-code/qr-code.module';
+import { MediaModule } from './modules/media/media.module';
 
 @Module({
   imports: [
@@ -79,6 +80,7 @@ import { QrCodeModule } from './modules/qr-code/qr-code.module';
     QueueModule,
     TasksModule,
     QrCodeModule,
+    MediaModule,
   ],
   controllers: [AppController],
   providers: [

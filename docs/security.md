@@ -107,11 +107,22 @@ elle reflète l'intention fonctionnelle actuelle du cadrage.
 | Changer le statut d'une tâche                                       | ✅ (toutes) |     ✅ (toutes)     |   ✅ (si assigné)   | ✅ (si assigné) |
 | Générer un QR code pour une campagne                                |     ✅      |         ✅          |         ✅          |       ❌        |
 | Consulter les QR codes / scans d'une campagne                       |     ✅      |         ✅          |         ✅          |       ❌        |
+| Réserver un upload de média (URL présignée)                         |     ✅      |         ✅          |         ✅          |       ✅        |
+| Confirmer un upload de média                                        |     ✅      |         ✅          |         ✅          |       ✅        |
+| Obtenir une URL de lecture d'un média confirmé                      |     ✅      |         ✅          |         ✅          |       ✅        |
 
 `GET /qr/:code` (résolution du scan) est **publique** (`@Public()`, sans JWT,
 n'apparaît donc pas dans la matrice ci-dessus) — throttlée dédiée, la cible de
 redirection est toujours résolue côté serveur à partir du `code` opaque,
 jamais fournie par l'appelant (voir BACK-305).
+
+`MediaModule` (BACK-307) est volontairement sans `@Roles(...)` : c'est un
+module transverse réutilisable (preuve d'installation `PROVIDER`, pièce
+jointe de tâche `ADMIN`/`MARKETING_MANAGER`...) — la restriction de rôle
+pertinente se fait au niveau de la fonctionnalité métier qui référence un
+`mediaId`, pas au niveau du stockage générique lui-même. L'isolation
+multi-tenant reste stricte (`assertSameCompany`, 404 cross-tenant) sur les
+trois endpoints.
 
 **Utilisation dans le code :**
 

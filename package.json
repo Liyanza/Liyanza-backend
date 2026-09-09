@@ -26,6 +26,8 @@
     "prisma:seed": "prisma db seed"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1128.0",
+    "@aws-sdk/s3-request-presigner": "^3.1128.0",
     "@bull-board/api": "^9.6.1",
     "@bull-board/express": "^9.6.1",
     "@bull-board/nestjs": "^9.6.1",

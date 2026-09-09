@@ -43,6 +43,11 @@ enum QrCodeTargetType {
   PROMO
 }
 
+enum MediaStatus {
+  PENDING
+  CONFIRMED
+}
+
 /// Entité ENTREPRISE – racine du multi-tenant.
 model Company {
   id             String    @id @default(cuid())
@@ -57,6 +62,7 @@ model Company {
   aiConversations AiConversation[] // ← nouvelle relation inverse
   recommendations Recommendation[] // ← nouvelle relation inverse
   tasks           Task[] // ← BACK-212
+  media           Media[] // ← BACK-307
 }
 
 /// Entité UTILISATEUR
@@ -80,6 +86,7 @@ model User {
   aiConversationsCreated AiConversation[] // ← nouvelle relation inverse (créateur)
   tasksCreated           Task[]           @relation("TaskCreatedBy") // ← BACK-212
   taskAssignments        TaskAssignee[] // ← BACK-212
+  mediaUploaded          Media[] // ← BACK-307
 
   @@index([companyId])
 }
@@ -393,4 +400,31 @@ model QrCodeScan {
 
   @@index([qrCodeId])
   @@index([scannedAt])
+}
+
+// =====================================================================
+// BACK-307 — Stockage médias (upload sécurisé, provider S3-compatible)
+// =====================================================================
+
+/// Suit le cycle de vie d'un fichier uploadé via URL présignée : PENDING dès
+/// la demande d'upload (clé réservée côté stockage, fichier pas encore
+/// confirmé), CONFIRMED une fois la présence réelle de l'objet vérifiée par
+/// le serveur (`HeadObject`) — voir `MediaService.confirmUpload`.
+model Media {
+  id          String      @id @default(cuid())
+  key         String      @unique
+  contentType String
+  sizeBytes   Int?
+  status      MediaStatus @default(PENDING)
+  createdAt   DateTime    @default(now())
+  confirmedAt DateTime?
+
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id])
+
+  uploadedById String
+  uploadedBy   User   @relation(fields: [uploadedById], references: [id])
+
+  @@index([companyId])
+  @@index([status])
 }

@@ -2,6 +2,7 @@ import { plainToInstance } from 'class-transformer';
 import {
   IsDefined,
   IsEmail,
+  IsIn,
   IsNumber,
   IsString,
   IsUrl,
@@ -125,6 +126,47 @@ export class EnvironmentVariables {
   @IsDefined()
   @IsEmail()
   SMTP_FROM!: string;
+
+  /**
+   * Stockage médias S3-compatible (BACK-307). Générique par conception
+   * (`S3MediaStorageProvider` parle le protocole S3, pas une API propriétaire
+   * AWS) : fonctionne à l'identique avec AWS S3, Cloudflare R2, Backblaze B2
+   * ou MinIO (dev local) selon la valeur de `S3_ENDPOINT`.
+   *
+   * `S3_ENDPOINT` reste optionnel : laissé vide, le SDK AWS résout
+   * l'endpoint standard `s3.<region>.amazonaws.com` (cas AWS S3 réel) ; toute
+   * autre valeur (MinIO, R2, B2) doit fournir son endpoint explicitement.
+   *
+   * `S3_FORCE_PATH_STYLE` : `'true'` obligatoire pour MinIO (et souvent pour
+   * les setups S3-compatibles auto-hébergés) — le style "virtual-hosted"
+   * (bucket en sous-domaine) par défaut du SDK AWS n'y fonctionne pas.
+   * Volontairement une chaîne `'true'|'false'` plutôt qu'un booléen : évite
+   * toute ambiguïté sur la conversion implicite d'une variable d'env
+   * (toujours une chaîne au niveau OS) vers `boolean`.
+   */
+  @IsOptional()
+  @IsUrl({ require_tld: false, protocols: ['http', 'https'] })
+  S3_ENDPOINT?: string;
+
+  @IsDefined()
+  @IsString()
+  S3_REGION!: string;
+
+  @IsDefined()
+  @IsString()
+  S3_BUCKET!: string;
+
+  @IsDefined()
+  @IsString()
+  S3_ACCESS_KEY_ID!: string;
+
+  @IsDefined()
+  @IsString()
+  S3_SECRET_ACCESS_KEY!: string;
+
+  @IsOptional()
+  @IsIn(['true', 'false'])
+  S3_FORCE_PATH_STYLE?: string;
 }
 
 export function validate(config: Record<string, unknown>) {
