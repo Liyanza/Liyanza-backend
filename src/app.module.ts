@@ -2,6 +2,7 @@ import { Module, MiddlewareConsumer, NestModule } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_FILTER, APP_GUARD } from '@nestjs/core';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
+import { ScheduleModule } from '@nestjs/schedule';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { validate } from './config/env.validation';
@@ -44,6 +45,12 @@ import { MediaModule } from './modules/media/media.module';
       load: [appConfig, databaseConfig, jwtConfig, redisConfig, corsConfig],
       validate,
     }),
+    // BACK-306 : active `@Cron(...)` (TasksSchedulerService — détection
+    // d'échéances proches/dépassées). Un seul process API en Render actuel
+    // (pas de scaling horizontal) : pas de risque de double exécution
+    // concurrente du cron sur plusieurs instances pour l'instant — à
+    // revisiter si le service est un jour répliqué (verrou distribué Redis).
+    ScheduleModule.forRoot(),
     // SÉCURITÉ (correctif audit — majeur) : rate limiting global anti
     // brute-force / credential stuffing. Limite par défaut : 20 requêtes /
     // minute / IP sur l'ensemble de l'API. Des limites plus strictes sont

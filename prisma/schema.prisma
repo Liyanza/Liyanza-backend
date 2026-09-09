@@ -336,13 +336,14 @@ model Notification {
 // =====================================================================
 
 model Task {
-  id          String     @id @default(cuid())
-  title       String
-  description String?    @db.Text
-  status      TaskStatus @default(TODO)
-  dueDate     DateTime?
-  createdAt   DateTime   @default(now())
-  updatedAt   DateTime   @updatedAt
+  id             String     @id @default(cuid())
+  title          String
+  description    String?    @db.Text
+  status         TaskStatus @default(TODO)
+  dueDate        DateTime?
+  reminderSentAt DateTime? // ← BACK-306 : idempotence de la relance cron
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
 
   companyId String
   company   Company @relation(fields: [companyId], references: [id])
