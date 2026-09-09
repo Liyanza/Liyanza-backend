@@ -4,6 +4,9 @@
 /build
 /tmp
 
+# Jest coverage report (généré par `npm run test:cov`)
+/coverage
+
 # Logs
 logs
 *.log

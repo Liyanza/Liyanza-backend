@@ -117,7 +117,105 @@
       "**/*.(t|j)s"
     ],
     "coverageDirectory": "../coverage",
-    "testEnvironment": "node"
+    "testEnvironment": "node",
+    "coverageThreshold": {
+      "src/modules/canaux/canaux.service.ts": {
+        "statements": 80,
+        "branches": 70,
+        "functions": 80,
+        "lines": 80
+      },
+      "src/modules/simulations/simulations.service.ts": {
+        "statements": 80,
+        "branches": 70,
+        "functions": 80,
+        "lines": 80
+      },
+      "src/modules/statistiques/statistiques.service.ts": {
+        "statements": 80,
+        "branches": 70,
+        "functions": 80,
+        "lines": 80
+      },
+      "src/modules/users/users.service.ts": {
+        "statements": 80,
+        "branches": 70,
+        "functions": 80,
+        "lines": 80
+      },
+      "src/modules/tasks/tasks.service.ts": {
+        "statements": 80,
+        "branches": 70,
+        "functions": 80,
+        "lines": 80
+      },
+      "src/modules/tasks/tasks-scheduler.service.ts": {
+        "statements": 80,
+        "branches": 70,
+        "functions": 80,
+        "lines": 80
+      },
+      "src/modules/diffusions/diffusions.service.ts": {
+        "statements": 80,
+        "branches": 70,
+        "functions": 80,
+        "lines": 80
+      },
+      "src/modules/entreprises/entreprises.service.ts": {
+        "statements": 80,
+        "branches": 70,
+        "functions": 80,
+        "lines": 80
+      },
+      "src/modules/notifications/notifications.service.ts": {
+        "statements": 80,
+        "branches": 70,
+        "functions": 80,
+        "lines": 80
+      },
+      "src/modules/qr-code/qr-code.service.ts": {
+        "statements": 80,
+        "branches": 70,
+        "functions": 80,
+        "lines": 80
+      },
+      "src/modules/media/media.service.ts": {
+        "statements": 80,
+        "branches": 70,
+        "functions": 80,
+        "lines": 80
+      },
+      "src/modules/monitoring/monitoring.service.ts": {
+        "statements": 80,
+        "branches": 70,
+        "functions": 80,
+        "lines": 80
+      },
+      "src/modules/auth/guards/*.guard.ts": {
+        "statements": 90,
+        "branches": 80,
+        "functions": 90,
+        "lines": 90
+      },
+      "src/modules/auth/utils/company-scope.util.ts": {
+        "statements": 90,
+        "branches": 90,
+        "functions": 90,
+        "lines": 90
+      },
+      "src/modules/auth/auth.service.ts": {
+        "statements": 90,
+        "branches": 80,
+        "functions": 90,
+        "lines": 90
+      },
+      "src/modules/auth/strategies/jwt.strategy.ts": {
+        "statements": 90,
+        "branches": 80,
+        "functions": 90,
+        "lines": 90
+      }
+    }
   },
   "lint-staged": {
     "*.{js,ts}": [
