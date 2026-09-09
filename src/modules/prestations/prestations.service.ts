@@ -16,6 +16,7 @@ import { CreatePrestationDto } from './dto/create-prestation.dto';
 import { SoumettrePreuveDto } from './dto/soumettre-preuve.dto';
 import { UpdateStatusDto } from './dto/update-status.dto';
 import { ValidationLinkResponseDto } from './dto/validation-link-response.dto';
+import { ValidationConsultationResponseDto } from './dto/validation-consultation-response.dto';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { parseDuration } from '../../common/utils/duration.util';
@@ -84,6 +85,23 @@ export class PrestationsService {
       throw new BadRequestException('Invalid planned installation date.');
     }
 
+    // CORRECTIF (écart fonctionnel majeur) : le prestataire assigné doit
+    // réellement exister, appartenir à la même entreprise (pas de scope
+    // cross-tenant) et porter le rôle PROVIDER — sinon
+    // `POST /prestations/:id/preuve` resterait inatteignable pour lui (voir
+    // le commentaire sur `CreatePrestationDto.providerId`).
+    const provider = await this.prisma.user.findFirst({
+      where: { id: dto.providerId, companyId: user.companyId },
+    });
+    if (!provider) {
+      throw new NotFoundException('Prestataire introuvable.');
+    }
+    if (provider.role !== Role.PROVIDER) {
+      throw new BadRequestException(
+        "L'utilisateur assigné doit avoir le rôle PROVIDER.",
+      );
+    }
+
     return this.prisma.installation.create({
       data: {
         location: dto.location,
@@ -92,7 +110,7 @@ export class PrestationsService {
         plannedInstallationDate: plannedDate,
         status: 'PLANNED',
         campaignId: campaign.id,
-        providerId: user.userId,
+        providerId: provider.id,
       },
     });
   }
@@ -326,19 +344,13 @@ export class PrestationsService {
   }
 
   /**
-   * Consomme un lien de validation externe (endpoint public, sans JWT
-   * d'authentification applicatif — le token de validation lui-même en
-   * tient lieu).
-   *
-   * CORRECTIF AUDIT (majeur) : applique réellement la sémantique
-   * "single-use" annoncée par `ValidationLinkResponseDto` : le token n'est
-   * accepté que si son `jti` est toujours marqué "unused" dans Redis. La
-   * lecture et l'invalidation sont effectuées en une seule opération
-   * atomique (`GETDEL`) — voir `RedisService.getDel` — de sorte qu'un rejeu
-   * concurrent du même lien soit systématiquement rejeté, sans fenêtre de
-   * course entre lecture et suppression.
+   * Décode et valide la structure du token de lien de validation (signature,
+   * expiration, claims attendus). Commun aux deux endpoints publics
+   * (consultation et consommation, BACK-308) — ne dit rien de l'état
+   * "unused"/consommé du `jti`, qui reste vérifié séparément (Redis) car
+   * seule la consommation doit y toucher.
    */
-  async consumeValidationLink(token: string) {
+  private verifyValidationToken(token: string): ValidationTokenPayload {
     let payload: ValidationTokenPayload;
     try {
       payload = this.jwtService.verify<ValidationTokenPayload>(token);
@@ -349,6 +361,60 @@ export class PrestationsService {
     if (payload.type !== 'validation' || !payload.jti || !payload.sub) {
       throw new UnauthorizedException('Lien de validation invalide.');
     }
+
+    return payload;
+  }
+
+  /**
+   * `GET /prestations/lien-validation/:token` (BACK-308, endpoint public) :
+   * consultation en **lecture seule**, ne consomme jamais le `jti` — le
+   * publicitaire externe doit pouvoir revoir la preuve avant de la valider,
+   * et recharger la page après validation sans que ça casse quoi que ce
+   * soit. Volontairement disponible même après consommation (le token reste
+   * la preuve de possession du lien, indépendamment de son état Redis) :
+   * `validationStatus` reflète alors l'état réel ("VALIDATED").
+   */
+  async consulterLienValidation(
+    token: string,
+  ): Promise<ValidationConsultationResponseDto> {
+    const payload = this.verifyValidationToken(token);
+
+    const installation = await this.prisma.installation.findUnique({
+      where: { id: payload.sub },
+      include: { proof: true },
+    });
+    if (!installation || !installation.proof) {
+      throw new NotFoundException(
+        'Installation ou preuve de publication introuvable.',
+      );
+    }
+
+    return new ValidationConsultationResponseDto({
+      location: installation.location,
+      photo: installation.proof.photo,
+      latitude: installation.proof.latitude,
+      longitude: installation.proof.longitude,
+      takenAt: installation.proof.takenAt.toISOString(),
+      validationStatus: installation.proof.validationStatus,
+      validationComment: installation.proof.validationComment,
+    });
+  }
+
+  /**
+   * `POST /prestations/lien-validation/:token` (endpoint public, sans JWT
+   * d'authentification applicatif — le token de validation lui-même en
+   * tient lieu). Consomme le lien (usage unique) et valide la preuve.
+   *
+   * CORRECTIF AUDIT (majeur) : applique réellement la sémantique
+   * "single-use" annoncée par `ValidationLinkResponseDto` : le token n'est
+   * accepté que si son `jti` est toujours marqué "unused" dans Redis. La
+   * lecture et l'invalidation sont effectuées en une seule opération
+   * atomique (`GETDEL`) — voir `RedisService.getDel` — de sorte qu'un rejeu
+   * concurrent du même lien soit systématiquement rejeté, sans fenêtre de
+   * course entre lecture et suppression.
+   */
+  async consumeValidationLink(token: string, commentaire?: string) {
+    const payload = this.verifyValidationToken(token);
 
     // CORRECTIF (complément) : `get` suivi de `del` n'est PAS atomique — deux
     // requêtes concurrentes présentant le même lien pourraient toutes deux
@@ -375,7 +441,10 @@ export class PrestationsService {
 
     return this.prisma.publicationProof.update({
       where: { installationId: installation.id },
-      data: { validationStatus: 'VALIDATED' },
+      data: {
+        validationStatus: 'VALIDATED',
+        validationComment: commentaire ?? null,
+      },
     });
   }
 }

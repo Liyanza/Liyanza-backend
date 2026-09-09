@@ -54,14 +54,16 @@ login(@Body() dto: LoginDto) { ... }
 
 **Endpoints actuellement publics** :
 
-| Endpoint              | Raison                                                                                    |
-| --------------------- | ----------------------------------------------------------------------------------------- |
-| `POST /auth/register` | Création de compte, pas encore authentifié                                                |
-| `POST /auth/login`    | Authentification elle-même                                                                |
-| `POST /auth/refresh`  | Renouvellement de session via refresh token (pas un access token JWT)                     |
-| `GET /`               | Racine applicative                                                                        |
-| `GET /health`         | Probe infra AWS ALB / ECS, appelée sans JWT                                               |
-| `GET /qr/:code`       | Résolution d'un scan de QR code (BACK-305), lien physique scanné par un tiers sans compte |
+| Endpoint                                   | Raison                                                                                                                                                                                                                   |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `POST /auth/register`                      | Création de compte, pas encore authentifié                                                                                                                                                                               |
+| `POST /auth/login`                         | Authentification elle-même                                                                                                                                                                                               |
+| `POST /auth/refresh`                       | Renouvellement de session via refresh token (pas un access token JWT)                                                                                                                                                    |
+| `GET /`                                    | Racine applicative                                                                                                                                                                                                       |
+| `GET /health`                              | Probe infra AWS ALB / ECS, appelée sans JWT                                                                                                                                                                              |
+| `GET /qr/:code`                            | Résolution d'un scan de QR code (BACK-305), lien physique scanné par un tiers sans compte                                                                                                                                |
+| `GET /prestations/lien-validation/:token`  | Consultation (lecture seule, ne consomme pas) d'un lien de validation externe (BACK-308) — le publicitaire externe n'a pas de compte, le token JWT signé tient lieu d'autorisation                                       |
+| `POST /prestations/lien-validation/:token` | Consommation (usage unique) du même lien — valide la preuve, commentaire optionnel (BACK-308). Absente de cette table avant BACK-308 alors que déjà publique depuis BACK-211 — écart de documentation corrigé au passage |
 
 ## 3. Rôles applicatifs (`enum Role`, `BACK-102`)
 

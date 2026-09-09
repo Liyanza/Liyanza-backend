@@ -11,6 +11,7 @@ import {
 } from '@nestjs/common';
 import { Request as ExpressRequest } from 'express';
 import { Role } from '@prisma/client';
+import { Throttle } from '@nestjs/throttler';
 import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { PrestationsService } from './prestations.service';
 import { CreatePrestationDto } from './dto/create-prestation.dto';
@@ -20,6 +21,8 @@ import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interfa
 import { Roles } from '../auth/decorators/roles.decorator';
 import { Public } from '../auth/decorators/public.decorator';
 import { ValidationLinkResponseDto } from './dto/validation-link-response.dto';
+import { ValidationConsultationResponseDto } from './dto/validation-consultation-response.dto';
+import { ConsommerValidationDto } from './dto/consommer-validation.dto';
 
 interface AuthenticatedRequest extends ExpressRequest {
   user: AuthenticatedUser;
@@ -131,6 +134,29 @@ export class PrestationsController {
   }
 
   /**
+   * GET /prestations/lien-validation/:token
+   *
+   * BACK-308 : endpoint public de **consultation seule** — le publicitaire
+   * externe doit pouvoir revoir la preuve avant de la valider, sans
+   * consommer le lien à usage unique (contrairement à l'ancien
+   * comportement où `consumeValidationLink` faisait les deux en un seul
+   * appel). Throttle dédié : écart de sécurité corrigé au passage — cette
+   * route publique n'en avait aucun (cf. `.claude/skills/liyanza-security-guardrails/SKILL.md` §10).
+   */
+  @Public()
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  @Get('prestations/lien-validation/:token')
+  @ApiOperation({
+    summary: 'Consult a validation link (read-only, does not consume it)',
+  })
+  @ApiResponse({ status: 200, type: ValidationConsultationResponseDto })
+  async consulterLienValidation(
+    @Param('token') token: string,
+  ): Promise<ValidationConsultationResponseDto> {
+    return this.prestationsService.consulterLienValidation(token);
+  }
+
+  /**
    * POST /prestations/lien-validation/:token
    *
    * CORRECTIF AUDIT (majeur #6) : endpoint public consommant le lien de
@@ -139,15 +165,25 @@ export class PrestationsController {
    * distinct du secret d'authentification applicatif) — aucun compte
    * utilisateur n'est requis côté publicitaire externe. La sémantique
    * "single-use" est appliquée côté service via un `jti` suivi dans Redis.
+   *
+   * BACK-308 : accepte désormais un `commentaire` optionnel, persisté sur
+   * la preuve. Throttle dédié ajouté (même écart que ci-dessus).
    */
   @Public()
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('prestations/lien-validation/:token')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Consume a (single-use) external validation link',
   })
   @ApiResponse({ status: 200, description: 'Proof validated' })
-  async consumeValidationLink(@Param('token') token: string) {
-    return this.prestationsService.consumeValidationLink(token);
+  async consumeValidationLink(
+    @Param('token') token: string,
+    @Body() dto: ConsommerValidationDto,
+  ) {
+    return this.prestationsService.consumeValidationLink(
+      token,
+      dto.commentaire,
+    );
   }
 }

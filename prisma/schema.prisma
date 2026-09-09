@@ -185,13 +185,14 @@ model Installation {
 }
 
 model PublicationProof {
-  id               String   @id @default(cuid())
-  photo            String
-  latitude         Float
-  longitude        Float
-  takenAt          DateTime
-  validationStatus String
-  createdAt        DateTime @default(now())
+  id                String   @id @default(cuid())
+  photo             String
+  latitude          Float
+  longitude         Float
+  takenAt           DateTime
+  validationStatus  String
+  createdAt         DateTime @default(now())
+  validationComment String?  @db.Text // ← BACK-308 : commentaire optionnel du publicitaire externe au retour
 
   installationId String       @unique
   installation   Installation @relation(fields: [installationId], references: [id])
