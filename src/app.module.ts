@@ -33,6 +33,7 @@ import { SimulationsModule } from './modules/simulations/simulations.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { QueueModule } from './modules/queue/queue.module';
 import { TasksModule } from './modules/tasks/tasks.module';
+import { QrCodeModule } from './modules/qr-code/qr-code.module';
 
 @Module({
   imports: [
@@ -77,6 +78,7 @@ import { TasksModule } from './modules/tasks/tasks.module';
     NotificationsModule,
     QueueModule,
     TasksModule,
+    QrCodeModule,
   ],
   controllers: [AppController],
   providers: [

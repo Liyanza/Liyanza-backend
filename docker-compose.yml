@@ -56,6 +56,7 @@ services:
       JWT_VALIDATION_SECRET: ${JWT_VALIDATION_SECRET}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
       VALIDATION_BASE_URL: ${VALIDATION_BASE_URL:-http://localhost:3000/validation}
+      QR_CODE_BASE_URL: ${QR_CODE_BASE_URL:-http://localhost:3000}
     depends_on:
       postgres:
         condition: service_healthy

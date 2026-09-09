@@ -54,13 +54,14 @@ login(@Body() dto: LoginDto) { ... }
 
 **Endpoints actuellement publics** :
 
-| Endpoint              | Raison                                                                |
-| --------------------- | --------------------------------------------------------------------- |
-| `POST /auth/register` | Création de compte, pas encore authentifié                            |
-| `POST /auth/login`    | Authentification elle-même                                            |
-| `POST /auth/refresh`  | Renouvellement de session via refresh token (pas un access token JWT) |
-| `GET /`               | Racine applicative                                                    |
-| `GET /health`         | Probe infra AWS ALB / ECS, appelée sans JWT                           |
+| Endpoint              | Raison                                                                                    |
+| --------------------- | ----------------------------------------------------------------------------------------- |
+| `POST /auth/register` | Création de compte, pas encore authentifié                                                |
+| `POST /auth/login`    | Authentification elle-même                                                                |
+| `POST /auth/refresh`  | Renouvellement de session via refresh token (pas un access token JWT)                     |
+| `GET /`               | Racine applicative                                                                        |
+| `GET /health`         | Probe infra AWS ALB / ECS, appelée sans JWT                                               |
+| `GET /qr/:code`       | Résolution d'un scan de QR code (BACK-305), lien physique scanné par un tiers sans compte |
 
 ## 3. Rôles applicatifs (`enum Role`, `BACK-102`)
 
@@ -104,6 +105,13 @@ elle reflète l'intention fonctionnelle actuelle du cadrage.
 | Modifier les métadonnées d'une tâche (titre, échéance, assignés)    |     ✅      |         ✅          |         ❌          |       ❌        |
 | Consulter les tâches de l'entreprise                                |     ✅      |         ✅          |     ✅ (toutes)     |   ✅ (toutes)   |
 | Changer le statut d'une tâche                                       | ✅ (toutes) |     ✅ (toutes)     |   ✅ (si assigné)   | ✅ (si assigné) |
+| Générer un QR code pour une campagne                                |     ✅      |         ✅          |         ✅          |       ❌        |
+| Consulter les QR codes / scans d'une campagne                       |     ✅      |         ✅          |         ✅          |       ❌        |
+
+`GET /qr/:code` (résolution du scan) est **publique** (`@Public()`, sans JWT,
+n'apparaît donc pas dans la matrice ci-dessus) — throttlée dédiée, la cible de
+redirection est toujours résolue côté serveur à partir du `code` opaque,
+jamais fournie par l'appelant (voir BACK-305).
 
 **Utilisation dans le code :**
 

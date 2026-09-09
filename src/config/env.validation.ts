@@ -85,6 +85,16 @@ export class EnvironmentVariables {
   @IsDefined()
   @IsUrl({ require_tld: false, protocols: ['http', 'https'] })
   VALIDATION_BASE_URL!: string;
+
+  /**
+   * URL publique de CETTE API (pas du frontend web), utilisée pour encoder
+   * la cible réelle de `GET /qr/:code` dans l'image du QR code généré
+   * (BACK-305) — contrairement à `VALIDATION_BASE_URL` qui pointe vers une
+   * page du frontend `Liyanza` (Next.js).
+   */
+  @IsDefined()
+  @IsUrl({ require_tld: false, protocols: ['http', 'https'] })
+  QR_CODE_BASE_URL!: string;
 }
 
 export function validate(config: Record<string, unknown>) {

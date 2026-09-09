@@ -36,6 +36,13 @@ enum TaskStatus {
   LATE
 }
 
+enum QrCodeTargetType {
+  WHATSAPP
+  FORM
+  PRODUCT_PAGE
+  PROMO
+}
+
 /// Entité ENTREPRISE – racine du multi-tenant.
 model Company {
   id             String    @id @default(cuid())
@@ -102,6 +109,7 @@ model Campaign {
   statistics      Statistic[]
   recommendations Recommendation[] // ← nouvelle relation inverse
   tasks           Task[] // ← BACK-212
+  qrCodes         QrCode[] // ← BACK-305
 
   @@index([launchedById])
 }
@@ -163,6 +171,7 @@ model Installation {
 
   proof         PublicationProof?
   statusHistory StatusHistory[]
+  qrCodes       QrCode[] // ← BACK-305
 
   @@index([campaignId])
   @@index([providerId])
@@ -349,4 +358,39 @@ model TaskAssignee {
 
   @@id([taskId, userId])
   @@index([userId])
+}
+
+// =====================================================================
+// BACK-305 — QR Code intelligent (zoning & distribution)
+// =====================================================================
+
+model QrCode {
+  id         String           @id @default(cuid())
+  code       String           @unique
+  targetType QrCodeTargetType
+  targetUrl  String
+  zone       String
+  createdAt  DateTime         @default(now())
+
+  installationId String?
+  installation   Installation? @relation(fields: [installationId], references: [id])
+
+  campaignId String
+  campaign   Campaign @relation(fields: [campaignId], references: [id])
+
+  scans QrCodeScan[]
+
+  @@index([campaignId])
+  @@index([zone])
+}
+
+model QrCodeScan {
+  id        String   @id @default(cuid())
+  scannedAt DateTime @default(now())
+
+  qrCodeId String
+  qrCode   QrCode @relation(fields: [qrCodeId], references: [id])
+
+  @@index([qrCodeId])
+  @@index([scannedAt])
 }

@@ -26,7 +26,12 @@
  */
 
 import 'dotenv/config';
-import { PrismaClient, Role, CampaignStatus } from '@prisma/client';
+import {
+  PrismaClient,
+  Role,
+  CampaignStatus,
+  QrCodeTargetType,
+} from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import * as bcrypt from 'bcrypt';
 
@@ -194,6 +199,22 @@ async function main() {
     where: { taskId_userId: { taskId: task.id, userId: marketingManager.id } },
     update: {},
     create: { taskId: task.id, userId: marketingManager.id },
+  });
+
+  // ---------------------------------------------------------------------
+  // 5. QR code d'exemple (BACK-305)
+  // ---------------------------------------------------------------------
+  await prisma.qrCode.upsert({
+    where: { id: 'seed-qr-1' },
+    update: {},
+    create: {
+      id: 'seed-qr-1',
+      code: 'seed-demo-bepanda',
+      targetType: QrCodeTargetType.FORM,
+      targetUrl: 'https://forms.liyanza.local/demo-bepanda',
+      zone: 'Bepanda',
+      campaignId: campaign.id,
+    },
   });
 
   console.log('[seed] Terminé avec succès ✅');
