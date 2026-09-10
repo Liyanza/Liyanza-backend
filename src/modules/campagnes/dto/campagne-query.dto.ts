@@ -1,5 +1,5 @@
 import { IsEnum, IsOptional } from 'class-validator';
-import { CampaignStatus } from '@prisma/client';
+import { CampaignStatus, CampaignType } from '@prisma/client';
 import { PaginationQueryDto } from '../../../common/dto/pagination-query.dto';
 
 /**
@@ -25,4 +25,10 @@ export class CampagneQueryDto extends PaginationQueryDto {
   @IsOptional()
   @IsEnum(CampaignStatus)
   status?: CampaignStatus;
+
+  // ← BACK-501 : permet au wizard mobile de lister uniquement les campagnes
+  // digitales (ou l'inverse), même principe que le filtre `status` ci-dessus.
+  @IsOptional()
+  @IsEnum(CampaignType)
+  type?: CampaignType;
 }

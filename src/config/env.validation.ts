@@ -3,6 +3,7 @@ import {
   IsDefined,
   IsEmail,
   IsIn,
+  IsNotEmpty,
   IsNumber,
   IsString,
   IsUrl,
@@ -182,6 +183,64 @@ export class EnvironmentVariables {
   })
   @NotEquals('changeme')
   INTERNAL_MONITORING_TOKEN!: string;
+
+  /**
+   * Intégration Meta Graph API (BACK-502/503/504) — OAuth Facebook/Instagram
+   * pour les campagnes digitales. `META_APP_SECRET` ne quitte jamais ce
+   * process (jamais renvoyé au client, jamais loggé).
+   */
+  @IsDefined()
+  @IsString()
+  META_APP_ID!: string;
+
+  @IsDefined()
+  @IsString()
+  META_APP_SECRET!: string;
+
+  @IsOptional()
+  @IsString()
+  META_GRAPH_API_VERSION?: string;
+
+  /**
+   * URL publique de CE backend pour le callback OAuth — doit être enregistrée
+   * telle quelle dans "Valid OAuth Redirect URIs" du dashboard Meta for
+   * Developers de l'App (Produit "Facebook Login").
+   */
+  @IsDefined()
+  @IsUrl({ require_tld: false, protocols: ['http', 'https'] })
+  META_OAUTH_REDIRECT_URI!: string;
+
+  /**
+   * Clé de chiffrement des tokens sociaux (AES-256-GCM), chaîne base64 de
+   * 32 octets — même rigueur que `JWT_SECRET` : un secret faible/placeholder
+   * rendrait les tokens Meta stockés triviaux à déchiffrer en cas de fuite
+   * de la base. `@MinLength(43)` couvre la longueur base64 minimale d'une
+   * clé de 32 octets ; la vérification exacte (32 octets après décodage) est
+   * faite au premier chiffrement/déchiffrement, voir
+   * `common/utils/token-encryption.util.ts`.
+   */
+  @IsDefined()
+  @IsString()
+  @MinLength(43, {
+    message:
+      'SOCIAL_TOKEN_ENCRYPTION_KEY must be a base64-encoded 32-byte key (44 characters with padding).',
+  })
+  @NotEquals('changeme')
+  SOCIAL_TOKEN_ENCRYPTION_KEY!: string;
+
+  /**
+   * Deep link (app mobile) vers lequel le callback OAuth redirige une fois
+   * le compte lié (ou le refus/l'échec constaté) — jamais le token dans
+   * cette redirection, seulement un statut. Volontairement `@IsString()`
+   * plutôt que `@IsUrl()` : un schéma d'app mobile personnalisé
+   * (`liyanza://oauth/callback`) n'est pas une URL http(s) valide, et
+   * `Liyanza-mobile` n'est pas dans le périmètre de ce repo pour trancher
+   * sa forme définitive — une simple URL http(s) de test convient en local.
+   */
+  @IsDefined()
+  @IsString()
+  @IsNotEmpty()
+  SOCIAL_OAUTH_MOBILE_REDIRECT_URL!: string;
 }
 
 export function validate(config: Record<string, unknown>) {
@@ -201,6 +260,21 @@ export function validate(config: Record<string, unknown>) {
             `  - ${err.property}: ${Object.values(err.constraints ?? {}).join(', ')}`,
         )
         .join('\n')}`,
+    );
+  }
+
+  // `@MinLength(43)` ne garantit qu'une longueur de chaîne plausible — la
+  // seule vérification qui compte pour AES-256-GCM est que le décodage
+  // base64 produise EXACTEMENT 32 octets. Vérifié ici, au démarrage, plutôt
+  // que de découvrir l'échec au premier chiffrement de token (voir
+  // `common/utils/token-encryption.util.ts`).
+  const decodedKeyLength = Buffer.from(
+    validatedConfig.SOCIAL_TOKEN_ENCRYPTION_KEY,
+    'base64',
+  ).length;
+  if (decodedKeyLength !== 32) {
+    throw new Error(
+      `❌ Invalid environment:\n  - SOCIAL_TOKEN_ENCRYPTION_KEY must decode to exactly 32 bytes (got ${decodedKeyLength}).`,
     );
   }
 

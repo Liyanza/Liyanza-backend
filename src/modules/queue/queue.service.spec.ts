@@ -16,6 +16,7 @@ describe('QueueService', () => {
         { provide: getQueueToken('ia-simulation'), useValue: mockQueue },
         { provide: getQueueToken('monitoring-radio'), useValue: mockQueue },
         { provide: getQueueToken('qr-code-scan'), useValue: mockQueue },
+        { provide: getQueueToken('social-metrics-sync'), useValue: mockQueue },
       ],
     }).compile();
 

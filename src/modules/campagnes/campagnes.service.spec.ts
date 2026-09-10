@@ -8,7 +8,12 @@ import {
 import { CampagnesService } from './campagnes.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
-import { BroadcastStatus, CampaignStatus, Role } from '@prisma/client';
+import {
+  BroadcastStatus,
+  CampaignStatus,
+  CampaignType,
+  Role,
+} from '@prisma/client';
 
 type MockedPrisma = {
   campaign: {
@@ -294,6 +299,7 @@ describe('CampagnesService', () => {
             startDate: '2026-01-01',
             endDate: '2026-02-01',
             plannedBudget: 0,
+            type: CampaignType.RADIO,
           },
           user,
         ),
@@ -309,10 +315,41 @@ describe('CampagnesService', () => {
             startDate: '2026-02-01',
             endDate: '2026-01-01',
             plannedBudget: 100,
+            type: CampaignType.RADIO,
           },
           user,
         ),
       ).rejects.toThrow(BadRequestException);
+    });
+
+    it('should pass the campaign type through to Prisma', async () => {
+      prisma.campaign.create.mockResolvedValue({ id: 'camp-1' });
+
+      await service.create(
+        {
+          name: 'C',
+          objective: 'Awareness',
+          startDate: '2026-01-01',
+          endDate: '2026-02-01',
+          plannedBudget: 100,
+          type: CampaignType.DIGITAL,
+        },
+        user,
+      );
+
+      expect(prisma.campaign.create).toHaveBeenCalledWith({
+        data: {
+          name: 'C',
+          startDate: new Date('2026-01-01'),
+          endDate: new Date('2026-02-01'),
+          plannedBudget: 100,
+          actualBudget: 0,
+          status: CampaignStatus.DRAFT,
+          objective: 'Awareness',
+          type: CampaignType.DIGITAL,
+          launchedById: user.userId,
+        },
+      });
     });
   });
 });

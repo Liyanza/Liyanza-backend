@@ -54,17 +54,18 @@ login(@Body() dto: LoginDto) { ... }
 
 **Endpoints actuellement publics** :
 
-| Endpoint                                   | Raison                                                                                                                                                                                                                                                                           |
-| ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `POST /auth/register`                      | Création de compte, pas encore authentifié                                                                                                                                                                                                                                       |
-| `POST /auth/login`                         | Authentification elle-même                                                                                                                                                                                                                                                       |
-| `POST /auth/refresh`                       | Renouvellement de session via refresh token (pas un access token JWT)                                                                                                                                                                                                            |
-| `GET /`                                    | Racine applicative                                                                                                                                                                                                                                                               |
-| `GET /health`                              | Probe infra AWS ALB / ECS, appelée sans JWT                                                                                                                                                                                                                                      |
-| `GET /qr/:code`                            | Résolution d'un scan de QR code (BACK-305), lien physique scanné par un tiers sans compte                                                                                                                                                                                        |
-| `GET /prestations/lien-validation/:token`  | Consultation (lecture seule, ne consomme pas) d'un lien de validation externe (BACK-308) — le publicitaire externe n'a pas de compte, le token JWT signé tient lieu d'autorisation                                                                                               |
-| `POST /prestations/lien-validation/:token` | Consommation (usage unique) du même lien — valide la preuve, commentaire optionnel (BACK-308). Absente de cette table avant BACK-308 alors que déjà publique depuis BACK-211 — écart de documentation corrigé au passage                                                         |
-| `POST /internal/monitoring/detections`     | Webhook d'ingestion des détections radio (BACK-304) — le futur `Liyanza-ia` n'a pas de compte applicatif. `@Public()` (pas de JWT) mais protégé par `InternalTokenGuard` (secret partagé `X-Internal-Token`, comparaison en temps constant sur un hash SHA-256 des deux valeurs) |
+| Endpoint                                   | Raison                                                                                                                                                                                                                                                                                                                                                                              |
+| ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /auth/register`                      | Création de compte, pas encore authentifié                                                                                                                                                                                                                                                                                                                                          |
+| `POST /auth/login`                         | Authentification elle-même                                                                                                                                                                                                                                                                                                                                                          |
+| `POST /auth/refresh`                       | Renouvellement de session via refresh token (pas un access token JWT)                                                                                                                                                                                                                                                                                                               |
+| `GET /`                                    | Racine applicative                                                                                                                                                                                                                                                                                                                                                                  |
+| `GET /health`                              | Probe infra AWS ALB / ECS, appelée sans JWT                                                                                                                                                                                                                                                                                                                                         |
+| `GET /qr/:code`                            | Résolution d'un scan de QR code (BACK-305), lien physique scanné par un tiers sans compte                                                                                                                                                                                                                                                                                           |
+| `GET /prestations/lien-validation/:token`  | Consultation (lecture seule, ne consomme pas) d'un lien de validation externe (BACK-308) — le publicitaire externe n'a pas de compte, le token JWT signé tient lieu d'autorisation                                                                                                                                                                                                  |
+| `POST /prestations/lien-validation/:token` | Consommation (usage unique) du même lien — valide la preuve, commentaire optionnel (BACK-308). Absente de cette table avant BACK-308 alors que déjà publique depuis BACK-211 — écart de documentation corrigé au passage                                                                                                                                                            |
+| `POST /internal/monitoring/detections`     | Webhook d'ingestion des détections radio (BACK-304) — le futur `Liyanza-ia` n'a pas de compte applicatif. `@Public()` (pas de JWT) mais protégé par `InternalTokenGuard` (secret partagé `X-Internal-Token`, comparaison en temps constant sur un hash SHA-256 des deux valeurs)                                                                                                    |
+| `GET /social-accounts/oauth/callback`      | Callback OAuth Meta (BACK-502/503) — Meta redirige le navigateur/webview directement ici, sans JWT. `@Public()`, `@Throttle` dédié (30/min). Protégé par un `state` à usage unique consommé atomiquement dans Redis (`GETDEL`) : companyId/userId proviennent exclusivement de ce `state`, jamais de la query string du callback (voir `SocialAccountsService.handleOAuthCallback`) |
 
 ## 3. Rôles applicatifs (`enum Role`, `BACK-102`)
 
@@ -86,33 +87,37 @@ Cette matrice sert de référence pour l'annotation `@Roles(...)` des futurs
 contrôleurs métier. Elle sera affinée module par module au fil des tickets ;
 elle reflète l'intention fonctionnelle actuelle du cadrage.
 
-| Fonctionnalité                                                      |   `ADMIN`   | `MARKETING_MANAGER` | `COMMUNITY_MANAGER` |   `PROVIDER`    |
-| ------------------------------------------------------------------- | :---------: | :-----------------: | :-----------------: | :-------------: |
-| Gérer les sous-comptes & permissions                                |     ✅      |         ❌          |         ❌          |       ❌        |
-| Définir objectifs / budget / cible d'une campagne                   |     ✅      |         ✅          |         ❌          |       ❌        |
-| Lancer une campagne marketing                                       |     ✅      |         ✅          |         ❌          |       ❌        |
-| Ajouter le contenu d'un spot, choisir les canaux                    |     ✅      |         ✅          |         ✅          |       ❌        |
-| Soumettre un spot à validation                                      |     ✅      |         ✅          |         ✅          |       ❌        |
-| Simuler les performances d'une campagne                             |     ✅      |         ✅          |         ❌          |       ❌        |
-| Consulter le monitoring de diffusion / conformité radio             |     ✅      |         ✅          |         ✅          |       ❌        |
-| Générer des rapports de conformité                                  |     ✅      |         ✅          |         ❌          |       ❌        |
-| Photographier une installation (preuve de publication géolocalisée) |     ❌      |         ❌          |         ❌          |       ✅        |
-| Consulter le tableau de bord / statistiques                         |     ✅      |         ✅          |    ✅ (lecture)     |       ❌        |
-| Générer / exporter des rapports                                     |     ✅      |         ✅          |         ❌          |       ❌        |
-| Utiliser l'assistant IA marketing                                   |     ✅      |         ✅          |         ✅          |       ❌        |
-| Analyser les performances / recommandations / ROI                   |     ✅      |         ✅          |         ❌          |       ❌        |
-| Consulter ses propres notifications                                 |     ✅      |         ✅          |         ✅          |       ✅        |
-| Marquer une notification comme lue                                  |     ✅      |         ✅          |         ✅          |       ✅        |
-| Accéder au dashboard BullMQ (/admin/queues)                         |     ✅      |         ❌          |         ❌          |       ❌        |
-| Créer une tâche / l'attribuer à des collaborateurs                  |     ✅      |         ✅          |         ❌          |       ❌        |
-| Modifier les métadonnées d'une tâche (titre, échéance, assignés)    |     ✅      |         ✅          |         ❌          |       ❌        |
-| Consulter les tâches de l'entreprise                                |     ✅      |         ✅          |     ✅ (toutes)     |   ✅ (toutes)   |
-| Changer le statut d'une tâche                                       | ✅ (toutes) |     ✅ (toutes)     |   ✅ (si assigné)   | ✅ (si assigné) |
-| Générer un QR code pour une campagne                                |     ✅      |         ✅          |         ✅          |       ❌        |
-| Consulter les QR codes / scans d'une campagne                       |     ✅      |         ✅          |         ✅          |       ❌        |
-| Réserver un upload de média (URL présignée)                         |     ✅      |         ✅          |         ✅          |       ✅        |
-| Confirmer un upload de média                                        |     ✅      |         ✅          |         ✅          |       ✅        |
-| Obtenir une URL de lecture d'un média confirmé                      |     ✅      |         ✅          |         ✅          |       ✅        |
+| Fonctionnalité                                                        |   `ADMIN`   | `MARKETING_MANAGER` | `COMMUNITY_MANAGER` |   `PROVIDER`    |
+| --------------------------------------------------------------------- | :---------: | :-----------------: | :-----------------: | :-------------: |
+| Gérer les sous-comptes & permissions                                  |     ✅      |         ❌          |         ❌          |       ❌        |
+| Définir objectifs / budget / cible d'une campagne                     |     ✅      |         ✅          |         ❌          |       ❌        |
+| Lancer une campagne marketing                                         |     ✅      |         ✅          |         ❌          |       ❌        |
+| Ajouter le contenu d'un spot, choisir les canaux                      |     ✅      |         ✅          |         ✅          |       ❌        |
+| Soumettre un spot à validation                                        |     ✅      |         ✅          |         ✅          |       ❌        |
+| Simuler les performances d'une campagne                               |     ✅      |         ✅          |         ❌          |       ❌        |
+| Consulter le monitoring de diffusion / conformité radio               |     ✅      |         ✅          |         ✅          |       ❌        |
+| Générer des rapports de conformité                                    |     ✅      |         ✅          |         ❌          |       ❌        |
+| Photographier une installation (preuve de publication géolocalisée)   |     ❌      |         ❌          |         ❌          |       ✅        |
+| Consulter le tableau de bord / statistiques                           |     ✅      |         ✅          |    ✅ (lecture)     |       ❌        |
+| Générer / exporter des rapports                                       |     ✅      |         ✅          |         ❌          |       ❌        |
+| Utiliser l'assistant IA marketing                                     |     ✅      |         ✅          |         ✅          |       ❌        |
+| Analyser les performances / recommandations / ROI                     |     ✅      |         ✅          |         ❌          |       ❌        |
+| Consulter ses propres notifications                                   |     ✅      |         ✅          |         ✅          |       ✅        |
+| Marquer une notification comme lue                                    |     ✅      |         ✅          |         ✅          |       ✅        |
+| Accéder au dashboard BullMQ (/admin/queues)                           |     ✅      |         ❌          |         ❌          |       ❌        |
+| Créer une tâche / l'attribuer à des collaborateurs                    |     ✅      |         ✅          |         ❌          |       ❌        |
+| Modifier les métadonnées d'une tâche (titre, échéance, assignés)      |     ✅      |         ✅          |         ❌          |       ❌        |
+| Consulter les tâches de l'entreprise                                  |     ✅      |         ✅          |     ✅ (toutes)     |   ✅ (toutes)   |
+| Changer le statut d'une tâche                                         | ✅ (toutes) |     ✅ (toutes)     |   ✅ (si assigné)   | ✅ (si assigné) |
+| Générer un QR code pour une campagne                                  |     ✅      |         ✅          |         ✅          |       ❌        |
+| Consulter les QR codes / scans d'une campagne                         |     ✅      |         ✅          |         ✅          |       ❌        |
+| Réserver un upload de média (URL présignée)                           |     ✅      |         ✅          |         ✅          |       ✅        |
+| Confirmer un upload de média                                          |     ✅      |         ✅          |         ✅          |       ✅        |
+| Obtenir une URL de lecture d'un média confirmé                        |     ✅      |         ✅          |         ✅          |       ✅        |
+| Remplir le wizard campagne digitale (objectif/audience/budget/canaux) |     ✅      |         ✅          |         ✅          |       ❌        |
+| Simuler une campagne digitale (BACK-501)                              |     ✅      |         ✅          |         ✅          |       ❌        |
+| Lier/déconnecter le compte Meta de l'entreprise / re-synchroniser     |     ✅      |         ✅          |         ❌          |       ❌        |
+| Consulter les comptes sociaux liés (BACK-502, transverse)             |     ✅      |         ✅          |         ✅          |       ✅        |
 
 `GET /qr/:code` (résolution du scan) est **publique** (`@Public()`, sans JWT,
 n'apparaît donc pas dans la matrice ci-dessus) — throttlée dédiée, la cible de

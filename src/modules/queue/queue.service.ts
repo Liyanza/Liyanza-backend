@@ -11,18 +11,20 @@ export class QueueService {
     @InjectQueue('ia-simulation') private iaSimulationQueue: Queue,
     @InjectQueue('monitoring-radio') private monitoringRadioQueue: Queue,
     @InjectQueue('qr-code-scan') private qrCodeScanQueue: Queue,
+    @InjectQueue('social-metrics-sync') private socialMetricsSyncQueue: Queue,
   ) {
     this.queues = new Map([
       ['notifications', this.notificationsQueue],
       ['ia-simulation', this.iaSimulationQueue],
       ['monitoring-radio', this.monitoringRadioQueue],
       ['qr-code-scan', this.qrCodeScanQueue],
+      ['social-metrics-sync', this.socialMetricsSyncQueue],
     ]);
   }
 
   /**
    * Add a job to the specified queue with a standardized payload.
-   * @param queueName - one of: notifications, ia-simulation, monitoring-radio, qr-code-scan
+   * @param queueName - one of: notifications, ia-simulation, monitoring-radio, qr-code-scan, social-metrics-sync
    * @param jobName - logical name of the job (e.g. 'send-email', 'run-simulation')
    * @param payload - data to be processed
    * @param options - additional BullMQ job options (override defaults)

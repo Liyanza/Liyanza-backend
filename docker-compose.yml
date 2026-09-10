@@ -132,6 +132,12 @@ services:
       S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-liyanza_minio_password}
       S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-true}
       INTERNAL_MONITORING_TOKEN: ${INTERNAL_MONITORING_TOKEN}
+      META_APP_ID: ${META_APP_ID}
+      META_APP_SECRET: ${META_APP_SECRET}
+      META_GRAPH_API_VERSION: ${META_GRAPH_API_VERSION:-v21.0}
+      META_OAUTH_REDIRECT_URI: ${META_OAUTH_REDIRECT_URI:-http://localhost:3000/social-accounts/oauth/callback}
+      SOCIAL_TOKEN_ENCRYPTION_KEY: ${SOCIAL_TOKEN_ENCRYPTION_KEY}
+      SOCIAL_OAUTH_MOBILE_REDIRECT_URL: ${SOCIAL_OAUTH_MOBILE_REDIRECT_URL:-http://localhost:3000/social-accounts/oauth/result}
     depends_on:
       postgres:
         condition: service_healthy

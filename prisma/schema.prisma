@@ -48,6 +48,40 @@ enum MediaStatus {
   CONFIRMED
 }
 
+enum CampaignType {
+  DIGITAL
+  RADIO
+  POSTER
+}
+
+enum DigitalObjective {
+  AWARENESS
+  ENGAGEMENT
+  CONVERSION
+}
+
+enum BudgetAllocationType {
+  TOTAL
+  DAILY
+}
+
+enum SocialPlatform {
+  FACEBOOK
+  INSTAGRAM
+}
+
+enum SocialAccountStatus {
+  ACTIVE
+  EXPIRED
+  REVOKED
+}
+
+enum MetricPeriod {
+  DAY_7
+  DAY_28
+  LIFETIME
+}
+
 /// Entité ENTREPRISE – racine du multi-tenant.
 model Company {
   id             String    @id @default(cuid())
@@ -63,6 +97,7 @@ model Company {
   recommendations Recommendation[] // ← nouvelle relation inverse
   tasks           Task[] // ← BACK-212
   media           Media[] // ← BACK-307
+  socialAccounts  SocialAccount[] // ← BACK-501
 }
 
 /// Entité UTILISATEUR
@@ -87,6 +122,7 @@ model User {
   tasksCreated           Task[]           @relation("TaskCreatedBy") // ← BACK-212
   taskAssignments        TaskAssignee[] // ← BACK-212
   mediaUploaded          Media[] // ← BACK-307
+  socialAccountsLinked   SocialAccount[] // ← BACK-501
 
   @@index([companyId])
 }
@@ -107,16 +143,24 @@ model Campaign {
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
 
+  // ← BACK-501 : distingue le pipeline Digital (nouveau) du pipeline
+  // traditionnel Radio/Support publicitaire (AdvertisingChannel/Broadcast,
+  // inchangé). Défaut RADIO pour une rétrocompatibilité totale des campagnes
+  // existantes, qui ne portent aujourd'hui aucune notion de type.
+  type CampaignType @default(RADIO)
+
   launchedById String
   launchedBy   User   @relation(fields: [launchedById], references: [id])
 
-  channels        AdvertisingChannel[]
-  broadcasts      Broadcast[]
-  installations   Installation[]
-  statistics      Statistic[]
-  recommendations Recommendation[] // ← nouvelle relation inverse
-  tasks           Task[] // ← BACK-212
-  qrCodes         QrCode[] // ← BACK-305
+  channels           AdvertisingChannel[]
+  broadcasts         Broadcast[]
+  installations      Installation[]
+  statistics         Statistic[]
+  recommendations    Recommendation[] // ← nouvelle relation inverse
+  tasks              Task[] // ← BACK-212
+  qrCodes            QrCode[] // ← BACK-305
+  digitalDetails     DigitalCampaignDetails? // ← BACK-501
+  digitalSimulations DigitalSimulation[] // ← BACK-501
 
   @@index([launchedById])
 }
@@ -429,4 +473,136 @@ model Media {
 
   @@index([companyId])
   @@index([status])
+}
+
+// =====================================================================
+// BACK-501/502/503/504 — Campagnes digitales & intégration Meta Graph API
+// =====================================================================
+
+/// Étapes 1-3 du formulaire de création d'une campagne digitale (objectif,
+/// audience, budget). Relation 1-1 avec Campaign : sa seule présence signale
+/// qu'une campagne est de type DIGITAL (en plus de `Campaign.type`).
+model DigitalCampaignDetails {
+  id        String           @id @default(cuid())
+  objective DigitalObjective
+
+  // Audience — démographie
+  ageMin       Int
+  ageMax       Int
+  targetGender String // "ALL" | "MALE" | "FEMALE" — reflète directement l'option Meta Ads, pas un enum dédié pour ne pas figer un choix qui n'appartient pas à ce repo
+
+  // Audience — cible géographique & centres d'intérêt
+  targetLocations String[]
+  targetInterests String[]
+
+  budgetAllocation BudgetAllocationType
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  campaignId String   @unique
+  campaign   Campaign @relation(fields: [campaignId], references: [id])
+
+  channels DigitalCampaignChannel[]
+}
+
+/// Étape 4 du formulaire : canaux de diffusion sélectionnés (Facebook,
+/// Instagram), chacun optionnellement lié au compte social qui alimentera
+/// la simulation en métriques réelles une fois connecté (BACK-502).
+model DigitalCampaignChannel {
+  id        String         @id @default(cuid())
+  platform  SocialPlatform
+  createdAt DateTime       @default(now())
+
+  digitalCampaignDetailsId String
+  digitalCampaignDetails   DigitalCampaignDetails @relation(fields: [digitalCampaignDetailsId], references: [id])
+
+  socialAccountId String?
+  socialAccount   SocialAccount? @relation(fields: [socialAccountId], references: [id])
+
+  @@unique([digitalCampaignDetailsId, platform])
+}
+
+/// Compte Meta (Facebook/Instagram) lié par une entreprise via OAuth
+/// (BACK-502). Le token d'accès n'est jamais stocké en clair — chiffré
+/// AES-256-GCM, voir `common/utils/token-encryption.util.ts`.
+model SocialAccount {
+  id                  String         @id @default(cuid())
+  platform            SocialPlatform
+  externalAccountId   String
+  externalAccountName String?
+
+  accessTokenCiphertext String    @db.Text
+  accessTokenIv         String
+  accessTokenTag        String
+  tokenExpiresAt        DateTime?
+  scopes                String[]
+
+  status               SocialAccountStatus @default(ACTIVE)
+  lastSyncedAt         DateTime?
+  // ← BACK-504 : idempotence du cron de détection d'expiration (même
+  // pattern que `Task.reminderSentAt`, BACK-306) — sans ce champ, chaque
+  // exécution quotidienne renotifierait tant que le compte reste dans la
+  // fenêtre "expire bientôt". Remis à `null` lors d'une reconnexion.
+  expiryReminderSentAt DateTime?
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
+
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id])
+
+  connectedById String
+  connectedBy   User   @relation(fields: [connectedById], references: [id])
+
+  metrics                 PlatformMetric[]
+  digitalCampaignChannels DigitalCampaignChannel[]
+
+  @@unique([companyId, platform, externalAccountId])
+  @@index([companyId])
+}
+
+/// Snapshot de métriques réelles ingérées depuis l'API Graph de Meta
+/// (BACK-503). Append-only : un cycle de synchronisation crée une nouvelle
+/// ligne plutôt que d'écraser la précédente (historique conservé pour audit
+/// et rejeu).
+model PlatformMetric {
+  id             String       @id @default(cuid())
+  followerCount  Int?
+  impressions    Int?
+  reach          Int?
+  engagementRate Float?
+  avgCpm         Decimal?     @db.Decimal(12, 2)
+  avgCpc         Decimal?     @db.Decimal(12, 2)
+  period         MetricPeriod
+  fetchedAt      DateTime     @default(now())
+  rawPayload     Json // réponse Graph API brute — audit/rejeu, jamais la source de vérité pour les requêtes (voir colonnes ci-dessus)
+
+  socialAccountId String
+  socialAccount   SocialAccount @relation(fields: [socialAccountId], references: [id])
+
+  @@index([socialAccountId])
+  @@index([fetchedAt])
+}
+
+/// Résultat d'une simulation de campagne digitale. Forme alignée sur le
+/// contrat du futur moteur réel (voir `docs/architecture.md`, section
+/// « Contrat IA — Simulation digitale ») pour qu'un branchement ultérieur sur
+/// Liyanza-ia n'exige aucune migration. Modèle séparé de `Simulation`
+/// (BACK-104/207, questionnaire libre) : ne touche pas au flux existant.
+model DigitalSimulation {
+  id            String   @id @default(cuid())
+  simulatedAt   DateTime @default(now())
+  inputSnapshot Json // audience/budget/objectif/métriques envoyés au moteur
+
+  predictedReach          Int?
+  predictedEngagementRate Float?
+  predictedCtr            Float?
+  predictedRoas           Float?
+  narrativeSummary        String?  @db.Text
+  warnings                String[]
+
+  campaignId String
+  campaign   Campaign @relation(fields: [campaignId], references: [id])
+
+  @@index([campaignId])
 }

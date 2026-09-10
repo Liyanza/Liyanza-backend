@@ -13,6 +13,7 @@ import { LancerCampagneDto } from './dto/lancer-campagne.dto';
 import {
   BroadcastStatus,
   CampaignStatus,
+  CampaignType,
   Prisma,
   Campaign,
 } from '@prisma/client';
@@ -51,6 +52,7 @@ export class CampagnesService {
         actualBudget: 0,
         status: CampaignStatus.DRAFT,
         objective: dto.objective,
+        type: dto.type,
         launchedById: user.userId,
       },
     });
@@ -64,6 +66,7 @@ export class CampagnesService {
     page: number,
     limit: number,
     status?: CampaignStatus,
+    type?: CampaignType,
   ) {
     if (!user.companyId) {
       throw new ForbiddenException(
@@ -79,6 +82,9 @@ export class CampagnesService {
     };
     if (status) {
       where.status = status;
+    }
+    if (type) {
+      where.type = type;
     }
 
     const [items, total] = await Promise.all([

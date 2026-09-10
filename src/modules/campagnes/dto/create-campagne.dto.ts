@@ -3,11 +3,13 @@ import {
   IsString,
   IsDateString,
   IsNumber,
+  IsEnum,
   Min,
   Max,
   MaxLength,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import { CampaignType } from '@prisma/client';
 
 /**
  * Borne haute du budget planifié.
@@ -49,4 +51,12 @@ export class CreateCampagneDto {
   @IsNotEmpty()
   @MaxLength(2000)
   objective!: string;
+
+  // Choisi explicitement par le client dès la création (wizard mobile) —
+  // pas de valeur par défaut côté DTO : le type conditionne tout le pipeline
+  // (Digital -> DigitalCampaignDetails/SocialAccount, Radio/Poster ->
+  // AdvertisingChannel/Broadcast inchangés), une omission silencieuse serait
+  // une source de confusion, pas une commodité.
+  @IsEnum(CampaignType)
+  type!: CampaignType;
 }

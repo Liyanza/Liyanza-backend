@@ -33,6 +33,7 @@ import { AuthModule } from '../auth/auth.module';
       { name: 'ia-simulation' },
       { name: 'monitoring-radio' },
       { name: 'qr-code-scan' },
+      { name: 'social-metrics-sync' },
     ),
     BullBoardModule.forRoot({
       route: '/admin/queues',
@@ -43,6 +44,7 @@ import { AuthModule } from '../auth/auth.module';
       { name: 'ia-simulation', adapter: BullMQAdapter },
       { name: 'monitoring-radio', adapter: BullMQAdapter },
       { name: 'qr-code-scan', adapter: BullMQAdapter },
+      { name: 'social-metrics-sync', adapter: BullMQAdapter },
     ),
   ],
   providers: [QueueService, QueueAuthMiddleware],

@@ -37,6 +37,8 @@ import { TasksModule } from './modules/tasks/tasks.module';
 import { QrCodeModule } from './modules/qr-code/qr-code.module';
 import { MonitoringModule } from './modules/monitoring/monitoring.module';
 import { MediaModule } from './modules/media/media.module';
+import { DigitalCampaignsModule } from './modules/digital-campaigns/digital-campaigns.module';
+import { SocialAccountsModule } from './modules/social-accounts/social-accounts.module';
 
 @Module({
   imports: [
@@ -90,6 +92,8 @@ import { MediaModule } from './modules/media/media.module';
     QrCodeModule,
     MediaModule,
     MonitoringModule,
+    DigitalCampaignsModule,
+    SocialAccountsModule,
   ],
   controllers: [AppController],
   providers: [
