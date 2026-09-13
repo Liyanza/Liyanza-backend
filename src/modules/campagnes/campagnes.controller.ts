@@ -12,6 +12,12 @@ import {
 } from '@nestjs/common';
 import { Request as ExpressRequest } from 'express';
 import { Role } from '@prisma/client';
+import {
+  ApiBearerAuth,
+  ApiOperation,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { CampagnesService } from './campagnes.service';
 import { CreateCampagneDto } from './dto/create-campagne.dto';
 import { UpdateCampagneDto } from './dto/update-campagne.dto';
@@ -24,6 +30,8 @@ interface AuthenticatedRequest extends ExpressRequest {
   user: AuthenticatedUser;
 }
 
+@ApiTags('campagnes')
+@ApiBearerAuth()
 @Controller('campagnes')
 export class CampagnesController {
   constructor(private readonly campagnesService: CampagnesService) {}
@@ -31,6 +39,8 @@ export class CampagnesController {
   @Post()
   @Roles(Role.ADMIN, Role.MARKETING_MANAGER)
   @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: 'Create a campaign (status DRAFT)' })
+  @ApiResponse({ status: 201, description: 'Campaign created' })
   async create(
     @Body() dto: CreateCampagneDto,
     @Request() req: AuthenticatedRequest,
@@ -40,6 +50,8 @@ export class CampagnesController {
 
   @Get()
   @Roles(Role.ADMIN, Role.MARKETING_MANAGER)
+  @ApiOperation({ summary: "List the caller's company campaigns" })
+  @ApiResponse({ status: 200, description: 'Paginated campaign list' })
   async findAll(
     @Request() req: AuthenticatedRequest,
     @Query() query: CampagneQueryDto,
@@ -50,12 +62,18 @@ export class CampagnesController {
 
   @Get(':id')
   @Roles(Role.ADMIN, Role.MARKETING_MANAGER)
+  @ApiOperation({ summary: 'Get a campaign by id' })
+  @ApiResponse({ status: 200, description: 'Campaign found' })
+  @ApiResponse({ status: 404, description: 'Campaign not found' })
   async findOne(@Param('id') id: string, @Request() req: AuthenticatedRequest) {
     return this.campagnesService.findOne(id, req.user);
   }
 
   @Patch(':id')
   @Roles(Role.ADMIN, Role.MARKETING_MANAGER)
+  @ApiOperation({ summary: 'Update campaign fields' })
+  @ApiResponse({ status: 200, description: 'Campaign updated' })
+  @ApiResponse({ status: 404, description: 'Campaign not found' })
   async update(
     @Param('id') id: string,
     @Body() dto: UpdateCampagneDto,
@@ -67,6 +85,15 @@ export class CampagnesController {
   @Post(':id/lancer')
   @Roles(Role.ADMIN, Role.MARKETING_MANAGER)
   @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Transition campaign status (DRAFT->PLANNED->IN_PROGRESS->COMPLETED/CANCELLED)',
+  })
+  @ApiResponse({ status: 200, description: 'Status transitioned' })
+  @ApiResponse({
+    status: 400,
+    description: 'Invalid transition or campaign not complete enough',
+  })
   async lancer(
     @Param('id') id: string,
     @Body() dto: LancerCampagneDto,

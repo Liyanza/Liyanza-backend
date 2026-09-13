@@ -10,6 +10,12 @@ import {
 } from '@nestjs/common';
 import { Request as ExpressRequest } from 'express';
 import { Role } from '@prisma/client';
+import {
+  ApiBearerAuth,
+  ApiOperation,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { AssistantIService } from './assistant-ia.service';
 import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -20,6 +26,8 @@ interface AuthenticatedRequest extends ExpressRequest {
   user: AuthenticatedUser;
 }
 
+@ApiTags('assistant-ia')
+@ApiBearerAuth()
 @Controller()
 export class AssistantIController {
   constructor(private readonly assistantService: AssistantIService) {}
@@ -31,6 +39,8 @@ export class AssistantIController {
   @Post('conversations')
   @Roles(Role.ADMIN, Role.MARKETING_MANAGER)
   @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: 'Create a new AI assistant conversation' })
+  @ApiResponse({ status: 201, description: 'Conversation created' })
   async createConversation(
     @Body() dto: CreateConversationDto,
     @Request() req: AuthenticatedRequest,
@@ -45,6 +55,8 @@ export class AssistantIController {
   @Post('conversations/:id/messages')
   @Roles(Role.ADMIN, Role.MARKETING_MANAGER)
   @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Send a message and get the AI assistant reply' })
+  @ApiResponse({ status: 200, description: 'AI reply persisted and returned' })
   async envoyerMessage(
     @Param('id') conversationId: string,
     @Body() dto: EnvoyerMessageDto,
@@ -59,6 +71,8 @@ export class AssistantIController {
    */
   @Get('conversations/:id')
   @Roles(Role.ADMIN, Role.MARKETING_MANAGER)
+  @ApiOperation({ summary: 'Get the full conversation history' })
+  @ApiResponse({ status: 200, description: 'Conversation with its messages' })
   async getConversation(
     @Param('id') conversationId: string,
     @Request() req: AuthenticatedRequest,
@@ -72,6 +86,8 @@ export class AssistantIController {
    */
   @Get('campagnes/:id/recommandations')
   @Roles(Role.ADMIN, Role.MARKETING_MANAGER)
+  @ApiOperation({ summary: 'List AI recommendations for a campaign' })
+  @ApiResponse({ status: 200, description: 'Recommendations by priority' })
   async getRecommandations(
     @Param('id') campaignId: string,
     @Request() req: AuthenticatedRequest,
@@ -86,6 +102,8 @@ export class AssistantIController {
   @Post('campagnes/:id/recommandations/generer')
   @Roles(Role.ADMIN, Role.MARKETING_MANAGER)
   @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: 'Trigger generation of new recommendations' })
+  @ApiResponse({ status: 201, description: 'Recommendations generated' })
   async genererRecommandations(
     @Param('id') campaignId: string,
     @Request() req: AuthenticatedRequest,

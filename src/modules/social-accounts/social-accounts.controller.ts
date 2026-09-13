@@ -13,6 +13,12 @@ import {
 import { Throttle } from '@nestjs/throttler';
 import { Request as ExpressRequest } from 'express';
 import { Role } from '@prisma/client';
+import {
+  ApiBearerAuth,
+  ApiOperation,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { SocialAccountsService } from './social-accounts.service';
 import { SocialAccountQueryDto } from './dto/social-account-query.dto';
 import { OAuthCallbackQueryDto } from './dto/oauth-callback-query.dto';
@@ -24,6 +30,7 @@ interface AuthenticatedRequest extends ExpressRequest {
   user: AuthenticatedUser;
 }
 
+@ApiTags('social-accounts')
 @Controller('social-accounts')
 export class SocialAccountsController {
   constructor(private readonly socialAccountsService: SocialAccountsService) {}
@@ -35,6 +42,9 @@ export class SocialAccountsController {
    * démarrer le wizard de campagne digitale — pas de `@Roles(...)`.
    */
   @Get()
+  @ApiBearerAuth()
+  @ApiOperation({ summary: "List the company's linked social accounts" })
+  @ApiResponse({ status: 200, description: 'Paginated social accounts' })
   async findAll(
     @Query() query: SocialAccountQueryDto,
     @Request() req: AuthenticatedRequest,
@@ -49,6 +59,9 @@ export class SocialAccountsController {
    */
   @Post('oauth/:platform/start')
   @Roles(Role.ADMIN, Role.MARKETING_MANAGER)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Start the Meta OAuth flow (Facebook/Instagram)' })
+  @ApiResponse({ status: 201, description: 'Authorization URL to open' })
   async startOAuth(
     @Param('platform') platform: string,
     @Request() req: AuthenticatedRequest,
@@ -67,6 +80,13 @@ export class SocialAccountsController {
   @Throttle({ default: { limit: 30, ttl: 60_000 } })
   @Get('oauth/callback')
   @Redirect()
+  @ApiOperation({
+    summary: 'Meta OAuth callback (called by Meta, not by API clients)',
+  })
+  @ApiResponse({
+    status: 302,
+    description: 'Redirect to the mobile/web result page',
+  })
   async oauthCallback(@Query() query: OAuthCallbackQueryDto) {
     const { redirectUrl } =
       await this.socialAccountsService.handleOAuthCallback(query);
@@ -82,6 +102,9 @@ export class SocialAccountsController {
   @Delete(':id')
   @Roles(Role.ADMIN, Role.MARKETING_MANAGER)
   @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Revoke a linked social account' })
+  @ApiResponse({ status: 200, description: 'Social account revoked' })
   async revoke(@Param('id') id: string, @Request() req: AuthenticatedRequest) {
     return this.socialAccountsService.revoke(id, req.user);
   }
@@ -90,6 +113,9 @@ export class SocialAccountsController {
   @Post(':id/sync')
   @Roles(Role.ADMIN, Role.MARKETING_MANAGER)
   @HttpCode(HttpStatus.ACCEPTED)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Trigger a manual metrics sync' })
+  @ApiResponse({ status: 202, description: 'Sync job enqueued' })
   async triggerSync(
     @Param('id') id: string,
     @Request() req: AuthenticatedRequest,

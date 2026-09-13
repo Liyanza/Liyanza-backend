@@ -153,6 +153,11 @@ export class RedisService implements OnModuleDestroy {
     return [total, remaining > 0 ? remaining : ttlSeconds];
   }
 
+  /** Utilisé par `HealthController` : vérifie une connexion réellement active. */
+  async ping(): Promise<void> {
+    await this.client.ping();
+  }
+
   async onModuleDestroy() {
     await this.client.quit();
   }

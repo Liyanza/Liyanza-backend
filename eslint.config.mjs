@@ -43,4 +43,15 @@ export default tseslint.config(
       '@typescript-eslint/require-await': 'off',
     },
   },
+  // Override pour les tests E2E (BACK-402) : `supertest`'s `Response.body`
+  // est typé `any` par nature (corps HTTP arbitraire côté client de test) —
+  // même pragmatisme que l'override Prisma ci-dessus, confiné au dossier
+  // `test/`, jamais à `src/`.
+  {
+    files: ['test/**/*.ts'],
+    rules: {
+      '@typescript-eslint/no-unsafe-member-access': 'off',
+      '@typescript-eslint/no-unsafe-assignment': 'off',
+    },
+  },
 );

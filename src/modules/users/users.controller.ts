@@ -11,6 +11,12 @@ import {
 } from '@nestjs/common';
 import { Request as ExpressRequest } from 'express';
 import { Role } from '@prisma/client';
+import {
+  ApiBearerAuth,
+  ApiOperation,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { UsersService } from './users.service';
 import { CreateSubAccountDto } from './dto/create-sub-account.dto';
 import { UpdateUserRoleDto } from './dto/update-user-role.dto';
@@ -21,6 +27,8 @@ interface AuthenticatedRequest extends ExpressRequest {
   user: AuthenticatedUser;
 }
 
+@ApiTags('users')
+@ApiBearerAuth()
 @Controller('users')
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
@@ -31,6 +39,11 @@ export class UsersController {
   @Post()
   @Roles(Role.ADMIN)
   @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary:
+      "Invite a sub-account in the caller's company (temporary password emailed)",
+  })
+  @ApiResponse({ status: 201, description: 'Sub-account created' })
   async createSubAccount(
     @Body() dto: CreateSubAccountDto,
     @Request() req: AuthenticatedRequest,
@@ -43,6 +56,8 @@ export class UsersController {
    */
   @Get()
   @Roles(Role.ADMIN)
+  @ApiOperation({ summary: "List all members of the caller's company" })
+  @ApiResponse({ status: 200, description: 'Company members' })
   async findAll(@Request() req: AuthenticatedRequest) {
     return this.usersService.findAll(req.user);
   }
@@ -52,6 +67,9 @@ export class UsersController {
    */
   @Patch(':id/role')
   @Roles(Role.ADMIN)
+  @ApiOperation({ summary: "Change a company member's role" })
+  @ApiResponse({ status: 200, description: 'Role updated' })
+  @ApiResponse({ status: 404, description: 'User not found' })
   async updateRole(
     @Param('id') id: string,
     @Body() dto: UpdateUserRoleDto,
@@ -66,6 +84,9 @@ export class UsersController {
   @Patch(':id/deactivate')
   @Roles(Role.ADMIN)
   @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Deactivate a company member (soft, no login)' })
+  @ApiResponse({ status: 204, description: 'User deactivated' })
+  @ApiResponse({ status: 404, description: 'User not found' })
   async deactivate(
     @Param('id') id: string,
     @Request() req: AuthenticatedRequest,
@@ -77,6 +98,8 @@ export class UsersController {
    * Get the authenticated user's profile (any authenticated user)
    */
   @Get('me')
+  @ApiOperation({ summary: "Get the caller's own profile" })
+  @ApiResponse({ status: 200, description: 'Current user profile' })
   async getProfile(@Request() req: AuthenticatedRequest) {
     return this.usersService.getProfile(req.user);
   }

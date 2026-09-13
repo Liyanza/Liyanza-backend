@@ -13,7 +13,12 @@ import {
 import { Request as ExpressRequest } from 'express';
 import { Role } from '@prisma/client';
 import { Throttle } from '@nestjs/throttler';
-import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiOperation,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { QrCodeService } from './qr-code.service';
 import { CreateQrCodeDto } from './dto/create-qr-code.dto';
 import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
@@ -33,6 +38,7 @@ export class QrCodeController {
   @Post('campagnes/:id/qr-codes')
   @Roles(Role.ADMIN, Role.MARKETING_MANAGER, Role.COMMUNITY_MANAGER)
   @HttpCode(HttpStatus.CREATED)
+  @ApiBearerAuth()
   @ApiOperation({
     summary: 'Generate a unique QR code for a campaign zone/support',
   })
@@ -47,6 +53,7 @@ export class QrCodeController {
 
   @Get('campagnes/:id/qr-codes')
   @Roles(Role.ADMIN, Role.MARKETING_MANAGER, Role.COMMUNITY_MANAGER)
+  @ApiBearerAuth()
   @ApiOperation({
     summary: 'List a campaign QR codes with scan counts, paginated',
   })

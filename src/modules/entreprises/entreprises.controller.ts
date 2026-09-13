@@ -10,6 +10,12 @@ import {
 } from '@nestjs/common';
 import { Request as ExpressRequest } from 'express';
 import { Role } from '@prisma/client';
+import {
+  ApiBearerAuth,
+  ApiOperation,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { EntreprisesService } from './entreprises.service';
 import { CreateEntrepriseDto } from './dto/create-entreprise.dto';
 import { UpdateEntrepriseDto } from './dto/update-entreprise.dto';
@@ -21,11 +27,21 @@ interface AuthenticatedRequest extends ExpressRequest {
   user: AuthenticatedUser;
 }
 
+@ApiTags('entreprises')
+@ApiBearerAuth()
 @Controller('entreprises')
 export class EntreprisesController {
   constructor(private readonly entreprisesService: EntreprisesService) {}
 
   @Post()
+  @ApiOperation({
+    summary: 'Create a company and become its ADMIN (one company per user)',
+  })
+  @ApiResponse({ status: 201, description: 'Company created' })
+  @ApiResponse({
+    status: 409,
+    description: 'User already belongs to a company',
+  })
   async create(
     @Body() createDto: CreateEntrepriseDto,
     @Request() req: AuthenticatedRequest,
@@ -40,6 +56,8 @@ export class EntreprisesController {
    */
   @Get()
   @Roles(Role.ADMIN)
+  @ApiOperation({ summary: "Get the caller's own company (paginated shape)" })
+  @ApiResponse({ status: 200, description: 'Company (or empty page)' })
   async findAll(
     @Request() req: AuthenticatedRequest,
     @Query() query: EntrepriseQueryDto,
@@ -52,12 +70,18 @@ export class EntreprisesController {
   }
 
   @Get(':id')
+  @ApiOperation({ summary: "Get a company by id (must be the caller's own)" })
+  @ApiResponse({ status: 200, description: 'Company found' })
+  @ApiResponse({ status: 404, description: 'Company not found' })
   async findOne(@Param('id') id: string, @Request() req: AuthenticatedRequest) {
     return this.entreprisesService.findOne(id, req.user);
   }
 
   @Patch(':id')
   @Roles(Role.ADMIN) // Only ADMIN can modify
+  @ApiOperation({ summary: "Update the caller's own company" })
+  @ApiResponse({ status: 200, description: 'Company updated' })
+  @ApiResponse({ status: 404, description: 'Company not found' })
   async update(
     @Param('id') id: string,
     @Body() updateDto: UpdateEntrepriseDto,

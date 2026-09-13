@@ -10,6 +10,12 @@ import {
 } from '@nestjs/common';
 import { Request as ExpressRequest } from 'express';
 import { Role } from '@prisma/client';
+import {
+  ApiBearerAuth,
+  ApiOperation,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { DiffusionsService } from './diffusions.service';
 import { UpdateDiffusionReelleDto } from './dto/update-diffusion-reelle.dto';
 import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
@@ -19,6 +25,8 @@ interface AuthenticatedRequest extends ExpressRequest {
   user: AuthenticatedUser;
 }
 
+@ApiTags('diffusions')
+@ApiBearerAuth()
 @Controller()
 export class DiffusionsController {
   constructor(private readonly diffusionsService: DiffusionsService) {}
@@ -31,6 +39,12 @@ export class DiffusionsController {
   @Patch('diffusions/:id/constat')
   @Roles(Role.ADMIN, Role.MARKETING_MANAGER)
   @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Record the actual broadcast time and audio proof' })
+  @ApiResponse({ status: 200, description: 'Constat recorded' })
+  @ApiResponse({
+    status: 409,
+    description: 'A constat was already recorded for this broadcast',
+  })
   async updateConstat(
     @Param('id') id: string,
     @Body() dto: UpdateDiffusionReelleDto,
@@ -46,6 +60,8 @@ export class DiffusionsController {
   @Get('campagnes/:id/rapport-conformite')
   @Roles(Role.ADMIN, Role.MARKETING_MANAGER)
   @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Generate the compliance report for a campaign' })
+  @ApiResponse({ status: 200, description: 'Compliance report' })
   async getRapportConformite(
     @Param('id') campaignId: string,
     @Request() req: AuthenticatedRequest,

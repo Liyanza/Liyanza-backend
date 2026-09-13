@@ -9,6 +9,12 @@ import {
   HttpStatus,
 } from '@nestjs/common';
 import { Request as ExpressRequest } from 'express';
+import {
+  ApiBearerAuth,
+  ApiOperation,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { NotificationsService } from './notifications.service';
 import { NotificationQueryDto } from './dto/notification-query.dto';
 import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
@@ -17,6 +23,8 @@ interface AuthenticatedRequest extends ExpressRequest {
   user: AuthenticatedUser;
 }
 
+@ApiTags('notifications')
+@ApiBearerAuth()
 @Controller('notifications')
 export class NotificationsController {
   constructor(private readonly notificationsService: NotificationsService) {}
@@ -28,6 +36,8 @@ export class NotificationsController {
    */
   @Get()
   @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: "List the caller's own notifications" })
+  @ApiResponse({ status: 200, description: 'Paginated notifications' })
   async findAll(
     @Request() req: AuthenticatedRequest,
     @Query() query: NotificationQueryDto,
@@ -41,6 +51,9 @@ export class NotificationsController {
    */
   @Patch(':id/lue')
   @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Mark a notification as read (idempotent)' })
+  @ApiResponse({ status: 200, description: 'Notification marked as read' })
+  @ApiResponse({ status: 404, description: 'Notification not found' })
   async markAsLue(
     @Param('id') id: string,
     @Request() req: AuthenticatedRequest,

@@ -12,6 +12,12 @@ import {
 } from '@nestjs/common';
 import { Request as ExpressRequest } from 'express';
 import { Role } from '@prisma/client';
+import {
+  ApiBearerAuth,
+  ApiOperation,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { DigitalCampaignsService } from './digital-campaigns.service';
 import { UpsertDigitalDetailsDto } from './dto/upsert-digital-details.dto';
 import { SelectDigitalChannelsDto } from './dto/select-digital-channels.dto';
@@ -30,6 +36,8 @@ interface AuthenticatedRequest extends ExpressRequest {
  * création/liaison du compte Meta lui-même (`SocialAccountsModule`, réservée
  * ADMIN/MARKETING_MANAGER).
  */
+@ApiTags('digital-campaigns')
+@ApiBearerAuth()
 @Controller('campagnes/:id')
 export class DigitalCampaignsController {
   constructor(
@@ -38,6 +46,10 @@ export class DigitalCampaignsController {
 
   @Put('digital-details')
   @Roles(Role.ADMIN, Role.MARKETING_MANAGER, Role.COMMUNITY_MANAGER)
+  @ApiOperation({
+    summary: 'Create/update the digital campaign wizard details',
+  })
+  @ApiResponse({ status: 200, description: 'Digital details upserted' })
   async upsertDetails(
     @Param('id') campaignId: string,
     @Body() dto: UpsertDigitalDetailsDto,
@@ -52,6 +64,8 @@ export class DigitalCampaignsController {
 
   @Get('digital-details')
   @Roles(Role.ADMIN, Role.MARKETING_MANAGER, Role.COMMUNITY_MANAGER)
+  @ApiOperation({ summary: 'Get the digital campaign wizard details' })
+  @ApiResponse({ status: 200, description: 'Digital campaign details' })
   async getDetails(
     @Param('id') campaignId: string,
     @Request() req: AuthenticatedRequest,
@@ -61,6 +75,10 @@ export class DigitalCampaignsController {
 
   @Put('digital-details/channels')
   @Roles(Role.ADMIN, Role.MARKETING_MANAGER, Role.COMMUNITY_MANAGER)
+  @ApiOperation({
+    summary: 'Select Facebook/Instagram channels for the digital campaign',
+  })
+  @ApiResponse({ status: 200, description: 'Channels selected' })
   async selectChannels(
     @Param('id') campaignId: string,
     @Body() dto: SelectDigitalChannelsDto,
@@ -76,6 +94,10 @@ export class DigitalCampaignsController {
   @Post('simulations-digitales')
   @Roles(Role.ADMIN, Role.MARKETING_MANAGER, Role.COMMUNITY_MANAGER)
   @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary: 'Run a digital campaign simulation from linked social metrics',
+  })
+  @ApiResponse({ status: 201, description: 'Digital simulation created' })
   async createSimulation(
     @Param('id') campaignId: string,
     @Request() req: AuthenticatedRequest,
@@ -85,6 +107,8 @@ export class DigitalCampaignsController {
 
   @Get('simulations-digitales')
   @Roles(Role.ADMIN, Role.MARKETING_MANAGER, Role.COMMUNITY_MANAGER)
+  @ApiOperation({ summary: 'Get the digital simulation history' })
+  @ApiResponse({ status: 200, description: 'Paginated digital simulations' })
   async getSimulations(
     @Param('id') campaignId: string,
     @Query() query: PaginationQueryDto,

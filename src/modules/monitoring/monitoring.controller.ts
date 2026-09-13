@@ -7,7 +7,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
-import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { ApiHeader, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { Public } from '../auth/decorators/public.decorator';
 import { MonitoringService } from './monitoring.service';
 import { RecordDetectionDto } from './dto/record-detection.dto';
@@ -29,11 +29,20 @@ export class MonitoringController {
   @Throttle({ default: { limit: 60, ttl: 60_000 } })
   @Post('detections')
   @HttpCode(HttpStatus.OK)
+  @ApiHeader({
+    name: 'X-Internal-Token',
+    description: 'Shared secret (INTERNAL_MONITORING_TOKEN), not a user JWT',
+    required: true,
+  })
   @ApiOperation({
     summary:
       'Ingest an already-performed radio broadcast detection (internal webhook, not the detection logic itself)',
   })
   @ApiResponse({ status: 200, description: 'Detection recorded (idempotent)' })
+  @ApiResponse({
+    status: 401,
+    description: 'Missing or invalid X-Internal-Token',
+  })
   async recordDetection(@Body() dto: RecordDetectionDto) {
     return this.monitoringService.recordDetection(dto);
   }

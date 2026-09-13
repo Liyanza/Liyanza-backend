@@ -6,9 +6,14 @@
   "transform": {
     "^.+\\.(t|j)s$": "ts-jest"
   },
+  "transformIgnorePatterns": [
+    "/node_modules/(?!(bullmq|@nestjs/bullmq|@nestjs/bull-shared)/)"
+  ],
   "moduleNameMapper": {
     "^@modules/(.*)$": "<rootDir>/src/modules/$1",
     "^@common/(.*)$": "<rootDir>/src/common/$1",
     "^@config/(.*)$": "<rootDir>/src/config/$1"
-  }
+  },
+  "globalSetup": "<rootDir>/test/setup/global-setup.ts",
+  "testTimeout": 30000
 }

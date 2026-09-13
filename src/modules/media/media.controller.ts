@@ -9,7 +9,12 @@ import {
   HttpStatus,
 } from '@nestjs/common';
 import { Request as ExpressRequest } from 'express';
-import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiOperation,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { MediaService } from './media.service';
 import { CreatePresignedUploadDto } from './dto/create-presigned-upload.dto';
 import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
@@ -19,6 +24,7 @@ interface AuthenticatedRequest extends ExpressRequest {
 }
 
 @ApiTags('media')
+@ApiBearerAuth()
 @Controller('media')
 export class MediaController {
   constructor(private readonly mediaService: MediaService) {}

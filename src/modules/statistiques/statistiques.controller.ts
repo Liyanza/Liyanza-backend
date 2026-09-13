@@ -10,6 +10,12 @@ import {
 } from '@nestjs/common';
 import type { Response } from 'express'; // ✅ import type
 import { Role } from '@prisma/client';
+import {
+  ApiBearerAuth,
+  ApiOperation,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { StatistiquesService } from './statistiques.service';
 import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -20,12 +26,16 @@ interface AuthenticatedRequest extends Request {
   user: AuthenticatedUser;
 }
 
+@ApiTags('statistiques')
+@ApiBearerAuth()
 @Controller()
 export class StatistiquesController {
   constructor(private readonly statsService: StatistiquesService) {}
 
   @Get('campagnes/:id/statistiques')
   @Roles(Role.ADMIN, Role.MARKETING_MANAGER)
+  @ApiOperation({ summary: 'Get statistics for a single campaign' })
+  @ApiResponse({ status: 200, description: 'Campaign statistics' })
   async getCampagneStatistiques(
     @Param('id') campaignId: string,
     @Query() filters: StatistiqueFilterDto,
@@ -40,12 +50,16 @@ export class StatistiquesController {
 
   @Get('dashboard')
   @Roles(Role.ADMIN, Role.MARKETING_MANAGER)
+  @ApiOperation({ summary: 'Get the company-wide dashboard aggregate' })
+  @ApiResponse({ status: 200, description: 'Dashboard aggregate' })
   async getDashboard(@Request() req: AuthenticatedRequest) {
     return this.statsService.getDashboard(req.user);
   }
 
   @Get('rapports')
   @Roles(Role.ADMIN, Role.MARKETING_MANAGER)
+  @ApiOperation({ summary: 'Export a report as CSV or PDF' })
+  @ApiResponse({ status: 200, description: 'Report file (csv or pdf)' })
   async exportRapport(
     @Query() query: RapportQueryDto,
     @Request() req: AuthenticatedRequest,

@@ -12,7 +12,12 @@ import {
 import { Request as ExpressRequest } from 'express';
 import { Role } from '@prisma/client';
 import { Throttle } from '@nestjs/throttler';
-import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiOperation,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { PrestationsService } from './prestations.service';
 import { CreatePrestationDto } from './dto/create-prestation.dto';
 import { SoumettrePreuveDto } from './dto/soumettre-preuve.dto';
@@ -41,6 +46,7 @@ export class PrestationsController {
   @Post('campagnes/:id/prestations')
   @Roles(Role.ADMIN, Role.MARKETING_MANAGER)
   @HttpCode(HttpStatus.CREATED)
+  @ApiBearerAuth()
   @ApiOperation({ summary: 'Create a planned installation for a campaign' })
   @ApiResponse({ status: 201, description: 'Installation created' })
   async createPrestation(
@@ -59,6 +65,7 @@ export class PrestationsController {
   @Post('prestations/:id/preuve')
   @Roles(Role.PROVIDER) // Only provider can submit proof
   @HttpCode(HttpStatus.CREATED)
+  @ApiBearerAuth()
   @ApiOperation({ summary: 'Submit a publication proof for an installation' })
   @ApiResponse({ status: 201, description: 'Proof submitted' })
   async soumettrePreuve(
@@ -81,6 +88,7 @@ export class PrestationsController {
   @Patch('prestations/:id/statut')
   @Roles(Role.ADMIN, Role.MARKETING_MANAGER)
   @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth()
   @ApiOperation({ summary: 'Update installation status with history' })
   @ApiResponse({ status: 200, description: 'Status updated' })
   async updateStatus(
@@ -98,6 +106,7 @@ export class PrestationsController {
    */
   @Get('prestations/:id/historique')
   @Roles(Role.ADMIN, Role.MARKETING_MANAGER, Role.PROVIDER)
+  @ApiBearerAuth()
   @ApiOperation({ summary: 'Get status history of an installation' })
   @ApiResponse({ status: 200, description: 'History retrieved' })
   async getHistorique(
@@ -122,6 +131,7 @@ export class PrestationsController {
   @Post('prestations/:id/lien-validation')
   @Roles(Role.ADMIN, Role.MARKETING_MANAGER)
   @HttpCode(HttpStatus.CREATED)
+  @ApiBearerAuth()
   @ApiOperation({
     summary: 'Generate a validation link for an external publicitaire',
   })
