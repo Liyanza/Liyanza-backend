@@ -32,4 +32,33 @@ export class OAuthLoginCallbackQueryDto {
   @IsString()
   @MaxLength(500)
   error_description?: string;
+
+  // Paramètres ajoutés par Google (jamais par Facebook) à CE callback précis,
+  // en plus de `code`/`state` — non documentés dans un schéma officiel mais
+  // systématiquement présents en pratique : `iss` (émetteur du jeton),
+  // `scope` (scopes effectivement accordés), `authuser` (index de session
+  // Google multi-compte), `prompt` (type d'écran affiché). Le
+  // `ValidationPipe` global tourne avec `forbidNonWhitelisted: true` : sans
+  // ces champs, TOUT callback Google est rejeté en 400 avant même d'atteindre
+  // `AuthService`. On les déclare donc uniquement pour les accepter — comme
+  // indiqué plus haut, ils ne sont jamais lus ni utilisés.
+  @IsOptional()
+  @IsString()
+  @MaxLength(2048)
+  iss?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  scope?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(16)
+  authuser?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(32)
+  prompt?: string;
 }
