@@ -4,11 +4,9 @@ import {
   Get,
   Body,
   Query,
-  Param,
   Request,
   Redirect,
   HttpStatus,
-  BadRequestException,
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { Request as ExpressRequest } from 'express';
@@ -16,7 +14,6 @@ import { Role } from '@prisma/client';
 import {
   ApiBearerAuth,
   ApiOperation,
-  ApiParam,
   ApiResponse,
   ApiTags,
 } from '@nestjs/swagger';
@@ -32,16 +29,6 @@ import { OAuthExchangeDto } from './dto/oauth-exchange.dto';
 import { Public } from './decorators/public.decorator';
 import { Roles } from './decorators/roles.decorator';
 import { AuthenticatedUser } from './interfaces/authenticated-user.interface';
-
-const OAUTH_PROVIDERS = ['google', 'facebook'] as const;
-type OAuthProviderParam = (typeof OAUTH_PROVIDERS)[number];
-
-function parseOAuthProvider(value: string): OAuthProviderParam {
-  if ((OAUTH_PROVIDERS as readonly string[]).includes(value)) {
-    return value as OAuthProviderParam;
-  }
-  throw new BadRequestException(`Unsupported OAuth provider: ${value}`);
-}
 
 interface AuthenticatedRequest extends ExpressRequest {
   user: AuthenticatedUser;
@@ -99,18 +86,35 @@ export class AuthController {
   // l'appelant est anonyme, c'est justement le but de la route.
   // ------------------------------------------------------------------
 
+  // Routes littérales plutôt qu'un unique `:provider` paramétré : la
+  // dernière version de `path-to-regexp` (utilisée par Express sous Nest)
+  // a supprimé le support des contraintes regex inline façon
+  // `:provider(google|facebook)` (PathError au boot). Un `:provider` non
+  // contraint entrerait en plus en collision avec `GET /auth/me` et
+  // `GET /auth/admin-check` ci-dessous (même forme d'URL à un segment) :
+  // deux routes littérales par fournisseur évitent les deux problèmes.
   @Public()
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
-  @Get(':provider(google|facebook)')
-  @ApiParam({ name: 'provider', enum: OAUTH_PROVIDERS })
-  @ApiOperation({ summary: 'Start the Google/Facebook login OAuth flow' })
+  @Get('google')
+  @ApiOperation({ summary: 'Start the Google login OAuth flow' })
   @ApiResponse({
     status: 302,
     description: 'Redirect to the provider consent screen',
   })
-  async startOAuthLogin(@Param('provider') providerParam: string) {
-    const provider = parseOAuthProvider(providerParam);
-    return this.authService.startOAuthLogin(provider);
+  async startGoogleLogin() {
+    return this.authService.startOAuthLogin('google');
+  }
+
+  @Public()
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Get('facebook')
+  @ApiOperation({ summary: 'Start the Facebook login OAuth flow' })
+  @ApiResponse({
+    status: 302,
+    description: 'Redirect to the provider consent screen',
+  })
+  async startFacebookLogin() {
+    return this.authService.startOAuthLogin('facebook');
   }
 
   // SÉCURITÉ : callback public appelé DIRECTEMENT par Google/Facebook après
@@ -121,24 +125,37 @@ export class AuthController {
   // Protégé par un `state` à usage unique consommé atomiquement dans Redis.
   @Public()
   @Throttle({ default: { limit: 30, ttl: 60_000 } })
-  @Get(':provider(google|facebook)/callback')
+  @Get('google/callback')
   @Redirect()
-  @ApiParam({ name: 'provider', enum: OAUTH_PROVIDERS })
   @ApiOperation({
-    summary:
-      'Google/Facebook login callback (called by the provider, not by API clients)',
+    summary: 'Google login callback (called by Google, not by API clients)',
   })
   @ApiResponse({
     status: 302,
     description: 'Redirect to the frontend result page',
   })
-  async oauthLoginCallback(
-    @Param('provider') providerParam: string,
-    @Query() query: OAuthLoginCallbackQueryDto,
-  ) {
-    const provider = parseOAuthProvider(providerParam);
+  async googleLoginCallback(@Query() query: OAuthLoginCallbackQueryDto) {
     const { redirectUrl } = await this.authService.handleOAuthLoginCallback(
-      provider,
+      'google',
+      query,
+    );
+    return { url: redirectUrl, statusCode: HttpStatus.FOUND };
+  }
+
+  @Public()
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @Get('facebook/callback')
+  @Redirect()
+  @ApiOperation({
+    summary: 'Facebook login callback (called by Facebook, not by API clients)',
+  })
+  @ApiResponse({
+    status: 302,
+    description: 'Redirect to the frontend result page',
+  })
+  async facebookLoginCallback(@Query() query: OAuthLoginCallbackQueryDto) {
+    const { redirectUrl } = await this.authService.handleOAuthLoginCallback(
+      'facebook',
       query,
     );
     return { url: redirectUrl, statusCode: HttpStatus.FOUND };
