@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
+import { HttpModule } from '@nestjs/axios';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import type { StringValue } from 'ms';
 import { AuthController } from './auth.controller';
@@ -11,6 +12,13 @@ import { RolesGuard } from './guards/roles.guard';
 import { CompanyScopeGuard } from './guards/company-scope.guard';
 import { PrismaModule } from '../prisma/prisma.module';
 import { RedisModule } from '../redis/redis.module';
+import { MailModule } from '../mail/mail.module';
+import { GoogleOAuthClient } from './clients/google-oauth.client';
+import { FacebookOAuthClient } from './clients/facebook-oauth.client';
+import {
+  GOOGLE_OAUTH_CLIENT_TOKEN,
+  FACEBOOK_OAUTH_CLIENT_TOKEN,
+} from './clients/oauth-login-client.interface';
 
 @Module({
   imports: [
@@ -34,6 +42,8 @@ import { RedisModule } from '../redis/redis.module';
     }),
     PrismaModule,
     RedisModule,
+    MailModule,
+    HttpModule.register({ timeout: 10_000 }),
   ],
   controllers: [AuthController],
   providers: [
@@ -42,6 +52,8 @@ import { RedisModule } from '../redis/redis.module';
     JwtAuthGuard,
     RolesGuard,
     CompanyScopeGuard,
+    { provide: GOOGLE_OAUTH_CLIENT_TOKEN, useClass: GoogleOAuthClient },
+    { provide: FACEBOOK_OAUTH_CLIENT_TOKEN, useClass: FacebookOAuthClient },
   ],
   exports: [
     AuthService,

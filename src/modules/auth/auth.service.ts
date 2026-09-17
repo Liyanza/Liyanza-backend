@@ -1,20 +1,38 @@
 import {
+  Inject,
   Injectable,
+  Logger,
   UnauthorizedException,
   ConflictException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import { randomUUID } from 'crypto';
+import { randomBytes, randomUUID } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
+import { ForgotPasswordDto } from './dto/forgot-password.dto';
+import { ResetPasswordDto } from './dto/reset-password.dto';
+import { OAuthLoginCallbackQueryDto } from './dto/oauth-login-callback-query.dto';
+import { OAuthExchangeDto } from './dto/oauth-exchange.dto';
 import * as bcrypt from 'bcrypt';
 import { Prisma, Role, User } from '@prisma/client';
 import { ConfigService } from '@nestjs/config';
 import type { StringValue } from 'ms';
 import { JwtPayload } from './interfaces/authenticated-user.interface';
 import { parseDuration } from '../../common/utils/duration.util';
+import { EMAIL_PROVIDER_TOKEN } from '../mail/interfaces/email-provider.interface';
+import type { EmailProvider } from '../mail/interfaces/email-provider.interface';
+import {
+  GOOGLE_OAUTH_CLIENT_TOKEN,
+  FACEBOOK_OAUTH_CLIENT_TOKEN,
+} from './clients/oauth-login-client.interface';
+import type {
+  OAuthLoginClient,
+  OAuthUserProfile,
+} from './clients/oauth-login-client.interface';
+
+type OAuthProvider = 'google' | 'facebook';
 
 /**
  * Hash bcrypt « leurre » utilisé pour égaliser le temps de réponse de
@@ -27,13 +45,33 @@ const DUMMY_BCRYPT_HASH =
 
 const SALT_ROUNDS = 10;
 
+// 10 minutes : même durée que le `state` OAuth Meta (social-accounts), pour
+// la même raison (assez large pour un login + consentement manuel, assez
+// court pour limiter la fenêtre d'un `state` intercepté mais jamais utilisé).
+const OAUTH_STATE_TTL_SECONDS = 600;
+
+// 60 secondes : le temps d'une seule redirection navigateur entre ce backend
+// et la page d'échange du frontend — jamais réutilisé au-delà.
+const OAUTH_EXCHANGE_TTL_SECONDS = 60;
+
+// 30 minutes : durée usuelle d'un lien de réinitialisation de mot de passe
+// (compromis sécurité/UX — assez court pour limiter la fenêtre d'exploitation
+// d'un email intercepté, assez long pour laisser le temps de le consulter).
+const PASSWORD_RESET_TTL_SECONDS = 30 * 60;
+
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private prisma: PrismaService,
     private jwtService: JwtService,
     private redisService: RedisService,
     private configService: ConfigService,
+    @Inject(EMAIL_PROVIDER_TOKEN) private emailProvider: EmailProvider,
+    @Inject(GOOGLE_OAUTH_CLIENT_TOKEN) private googleClient: OAuthLoginClient,
+    @Inject(FACEBOOK_OAUTH_CLIENT_TOKEN)
+    private facebookClient: OAuthLoginClient,
   ) {}
 
   // ------------------------------------------------------------------
@@ -291,6 +329,339 @@ export class AuthService {
     }
 
     await this.redisService.delByPattern(`refresh:${userId}:*`);
+    return { success: true };
+  }
+
+  // ------------------------------------------------------------------
+  // BACK-505 — Connexion Google/Facebook
+  //
+  // DISTINCT du flow OAuth Meta de `SocialAccountsService` (BACK-502/503) :
+  // celui-ci authentifie un utilisateur ANONYME (pas de JWT, pas de contexte
+  // entreprise à restituer) — le `state` n'est donc qu'un nonce anti-CSRF,
+  // jamais un payload chiffré à déchiffrer au callback.
+  // ------------------------------------------------------------------
+
+  private oauthClient(provider: OAuthProvider): OAuthLoginClient {
+    return provider === 'google' ? this.googleClient : this.facebookClient;
+  }
+
+  private oauthRedirectUriConfigKey(provider: OAuthProvider): string {
+    return provider === 'google'
+      ? 'GOOGLE_OAUTH_REDIRECT_URI'
+      : 'FACEBOOK_LOGIN_REDIRECT_URI';
+  }
+
+  private oauthStateKey(state: string): string {
+    return `oauth-login-state:${state}`;
+  }
+
+  private oauthExchangeKey(code: string): string {
+    return `oauth-exchange:${code}`;
+  }
+
+  private passwordResetKey(token: string): string {
+    return `password-reset:${token}`;
+  }
+
+  private buildOAuthResultUrl(
+    base: string,
+    status: 'success' | 'error',
+    params: Record<string, string | undefined>,
+  ): string {
+    const url = new URL(base);
+    url.searchParams.set('status', status);
+    for (const [key, value] of Object.entries(params)) {
+      if (value) url.searchParams.set(key, value);
+    }
+    return url.toString();
+  }
+
+  async startOAuthLogin(provider: OAuthProvider) {
+    const state = randomBytes(24).toString('base64url');
+    await this.redisService.set(
+      this.oauthStateKey(state),
+      '1',
+      OAUTH_STATE_TTL_SECONDS,
+    );
+
+    const redirectUri = this.configService.getOrThrow<string>(
+      this.oauthRedirectUriConfigKey(provider),
+    );
+
+    return {
+      authorizationUrl: this.oauthClient(provider).getAuthorizationUrl(
+        state,
+        redirectUri,
+      ),
+    };
+  }
+
+  /**
+   * Callback public appelé directement par le navigateur après consentement
+   * (ou refus) côté Google/Facebook — jamais de JWT ici, l'utilisateur n'est
+   * pas encore authentifié. Ne renvoie jamais de token dans l'URL de
+   * redirection : seulement un code d'échange à usage unique et de très
+   * courte durée de vie (voir `exchangeOAuthCode`).
+   */
+  async handleOAuthLoginCallback(
+    provider: OAuthProvider,
+    query: OAuthLoginCallbackQueryDto,
+  ) {
+    const frontendBase = this.configService.getOrThrow<string>(
+      'OAUTH_LOGIN_REDIRECT_URL',
+    );
+
+    if (query.error) {
+      this.logger.warn(
+        `${provider} OAuth denied/error: ${query.error} — ${query.error_description ?? ''}`,
+      );
+      return {
+        redirectUrl: this.buildOAuthResultUrl(frontendBase, 'error', {
+          reason: 'denied',
+        }),
+      };
+    }
+
+    // Consommation atomique du nonce — au plus un appelant concurrent (rejeu
+    // du callback, double redirection navigateur) obtient un `state` valide.
+    const consumed = await this.redisService.getDel(
+      this.oauthStateKey(query.state),
+    );
+    if (!consumed) {
+      return {
+        redirectUrl: this.buildOAuthResultUrl(frontendBase, 'error', {
+          reason: 'invalid_or_expired_state',
+        }),
+      };
+    }
+
+    if (!query.code) {
+      return {
+        redirectUrl: this.buildOAuthResultUrl(frontendBase, 'error', {
+          reason: 'missing_code',
+        }),
+      };
+    }
+
+    try {
+      const redirectUri = this.configService.getOrThrow<string>(
+        this.oauthRedirectUriConfigKey(provider),
+      );
+      const profile = await this.oauthClient(provider).exchangeCodeForProfile(
+        query.code,
+        redirectUri,
+      );
+      const user = await this.findOrCreateOAuthUser(provider, profile);
+
+      if (user.deactivatedAt) {
+        return {
+          redirectUrl: this.buildOAuthResultUrl(frontendBase, 'error', {
+            reason: 'account_disabled',
+          }),
+        };
+      }
+
+      const accessToken = this.signAccessToken(user);
+      const refreshToken = await this.issueRefreshToken(user);
+      const exchangeCode = randomBytes(32).toString('base64url');
+
+      await this.redisService.set(
+        this.oauthExchangeKey(exchangeCode),
+        JSON.stringify({
+          accessToken,
+          refreshToken,
+          user: {
+            id: user.id,
+            email: user.email,
+            firstName: user.firstName,
+            lastName: user.lastName,
+            role: user.role,
+          },
+        }),
+        OAUTH_EXCHANGE_TTL_SECONDS,
+      );
+
+      return {
+        redirectUrl: this.buildOAuthResultUrl(frontendBase, 'success', {
+          code: exchangeCode,
+        }),
+      };
+    } catch (error) {
+      this.logger.error(
+        `${provider} OAuth login callback failed`,
+        error instanceof Error ? error.stack : String(error),
+      );
+      return {
+        redirectUrl: this.buildOAuthResultUrl(frontendBase, 'error', {
+          reason: 'exchange_failed',
+        }),
+      };
+    }
+  }
+
+  /**
+   * Appelée par le frontend (jamais directement par le navigateur) juste
+   * après la redirection : échange le code d'échange à usage unique contre
+   * la vraie paire de tokens. `GETDEL` garantit qu'un code intercepté (log
+   * d'accès, historique navigateur) ne peut être rejoué, et seulement dans
+   * les `OAUTH_EXCHANGE_TTL_SECONDS` suivant son émission.
+   */
+  async exchangeOAuthCode(dto: OAuthExchangeDto) {
+    const raw = await this.redisService.getDel(this.oauthExchangeKey(dto.code));
+    if (!raw) {
+      throw new UnauthorizedException('Invalid or expired exchange code.');
+    }
+    return JSON.parse(raw) as {
+      accessToken: string;
+      refreshToken: string;
+      user: {
+        id: string;
+        email: string;
+        firstName: string;
+        lastName: string;
+        role: Role;
+      };
+    };
+  }
+
+  /**
+   * Associe/rattache un compte OAuth à un utilisateur Liyanza :
+   * 1. déjà lié à ce provider → on le renvoie tel quel ;
+   * 2. email déjà inscrit (compte mot de passe préexistant) → on LIE le
+   *    compte au lieu d'en créer un doublon (même personne, même identifiant
+   *    métier `email`) ;
+   * 3. sinon, nouveau compte — même règle de sécurité que `register()` :
+   *    rôle le plus bas, pas d'entreprise, jamais déterminé par une donnée
+   *    externe (ici le profil du provider).
+   */
+  private async findOrCreateOAuthUser(
+    provider: OAuthProvider,
+    profile: OAuthUserProfile,
+  ): Promise<User> {
+    const existingByProviderId = await this.prisma.user.findUnique({
+      where:
+        provider === 'google'
+          ? { googleId: profile.providerId }
+          : { facebookId: profile.providerId },
+    });
+    if (existingByProviderId) {
+      return existingByProviderId;
+    }
+
+    const existingByEmail = await this.prisma.user.findUnique({
+      where: { email: profile.email },
+    });
+    if (existingByEmail) {
+      return this.prisma.user.update({
+        where: { id: existingByEmail.id },
+        data:
+          provider === 'google'
+            ? { googleId: profile.providerId }
+            : { facebookId: profile.providerId },
+      });
+    }
+
+    try {
+      return await this.prisma.user.create({
+        data: {
+          email: profile.email,
+          firstName: profile.firstName,
+          lastName: profile.lastName,
+          role: Role.COMMUNITY_MANAGER,
+          companyId: null,
+          password: null,
+          phone: null,
+          googleId: provider === 'google' ? profile.providerId : null,
+          facebookId: provider === 'facebook' ? profile.providerId : null,
+        },
+      });
+    } catch (error) {
+      // CORRECTIF AUDIT (même race condition que register()) : deux
+      // connexions OAuth concurrentes sur un email jamais vu peuvent toutes
+      // deux passer le findUnique ci-dessus. La contrainte @unique sur
+      // `email` est la seule source de vérité atomique.
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        return this.prisma.user.findUniqueOrThrow({
+          where: { email: profile.email },
+        });
+      }
+      throw error;
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // BACK-506 — Réinitialisation de mot de passe
+  // ------------------------------------------------------------------
+
+  /**
+   * Ne révèle JAMAIS si l'email correspond à un compte existant (même
+   * garde-fou que `login()` — énumération de comptes) : toujours `{success:
+   * true}`, un email n'est envoyé que si un compte actif ET disposant d'un
+   * mot de passe local correspond (un compte 100% Google/Facebook n'a rien à
+   * réinitialiser).
+   */
+  async forgotPassword(dto: ForgotPasswordDto): Promise<{ success: true }> {
+    const user = await this.prisma.user.findUnique({
+      where: { email: dto.email },
+    });
+
+    if (user && !user.deactivatedAt && user.password) {
+      const token = randomBytes(32).toString('base64url');
+      await this.redisService.set(
+        this.passwordResetKey(token),
+        user.id,
+        PASSWORD_RESET_TTL_SECONDS,
+      );
+
+      const resetUrl = new URL(
+        this.configService.getOrThrow<string>('PASSWORD_RESET_URL'),
+      );
+      resetUrl.searchParams.set('token', token);
+
+      // Best-effort : un échec d'envoi ne doit ni renseigner l'appelant sur
+      // l'existence du compte (voir commentaire ci-dessus), ni faire échouer
+      // cette requête publique.
+      await this.emailProvider
+        .send({
+          to: user.email,
+          subject: 'Réinitialisation de votre mot de passe Liyanza',
+          text: `Bonjour ${user.firstName},\n\nVous avez demandé la réinitialisation de votre mot de passe Liyanza. Cliquez sur le lien suivant (valable 30 minutes) pour choisir un nouveau mot de passe :\n\n${resetUrl.toString()}\n\nSi vous n'êtes pas à l'origine de cette demande, ignorez cet email : votre mot de passe restera inchangé.`,
+        })
+        .catch((error: unknown) => {
+          this.logger.error(
+            `Failed to send password reset email to user ${user.id}`,
+            error instanceof Error ? error.stack : String(error),
+          );
+        });
+    }
+
+    return { success: true };
+  }
+
+  /**
+   * CORRECTIF AUDIT (cohérence avec le reste du module) : une réinitialisation
+   * de mot de passe révoque TOUTES les sessions existantes (`refresh:userId:*`)
+   * — sans quoi un attaquant disposant déjà d'un refresh token volé
+   * conserverait l'accès après que la victime a « sécurisé » son compte.
+   */
+  async resetPassword(dto: ResetPasswordDto): Promise<{ success: true }> {
+    const userId = await this.redisService.getDel(
+      this.passwordResetKey(dto.token),
+    );
+    if (!userId) {
+      throw new UnauthorizedException('Invalid or expired reset token.');
+    }
+
+    const hashedPassword = await bcrypt.hash(dto.newPassword, SALT_ROUNDS);
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { password: hashedPassword },
+    });
+    await this.redisService.delByPattern(`refresh:${userId}:*`);
+
     return { success: true };
   }
 }

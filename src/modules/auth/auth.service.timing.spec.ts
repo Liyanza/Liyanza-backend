@@ -7,6 +7,11 @@ import { AuthService } from './auth.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
 import { Role } from '@prisma/client';
+import { EMAIL_PROVIDER_TOKEN } from '../mail/interfaces/email-provider.interface';
+import {
+  GOOGLE_OAUTH_CLIENT_TOKEN,
+  FACEBOOK_OAUTH_CLIENT_TOKEN,
+} from './clients/oauth-login-client.interface';
 
 // `bcrypt` est un module natif : ses exports ne sont pas redéfinissables, donc
 // `jest.spyOn(bcrypt, 'compare')` lève « Cannot redefine property ». On mocke
@@ -64,7 +69,28 @@ describe('AuthService — résistance à l’énumération de comptes', () => {
             delByPattern: jest.fn(),
           },
         },
-        { provide: ConfigService, useValue: { get: jest.fn() } },
+        {
+          provide: ConfigService,
+          useValue: { get: jest.fn(), getOrThrow: jest.fn() },
+        },
+        {
+          provide: EMAIL_PROVIDER_TOKEN,
+          useValue: { send: jest.fn().mockResolvedValue(undefined) },
+        },
+        {
+          provide: GOOGLE_OAUTH_CLIENT_TOKEN,
+          useValue: {
+            getAuthorizationUrl: jest.fn(),
+            exchangeCodeForProfile: jest.fn(),
+          },
+        },
+        {
+          provide: FACEBOOK_OAUTH_CLIENT_TOKEN,
+          useValue: {
+            getAuthorizationUrl: jest.fn(),
+            exchangeCodeForProfile: jest.fn(),
+          },
+        },
       ],
     }).compile();
 

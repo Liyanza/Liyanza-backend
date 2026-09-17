@@ -1,5 +1,28 @@
 # Architecture — Contrat IA (`Liyanza-backend` ↔ `Liyanza-ia`)
 
+> **Mise à jour 2026-09-14** : le plan d'implémentation décrit dans ce
+> document a changé. L'IA réelle est désormais répartie sur **deux repos
+> séparés**, pris en charge par une équipe IA dédiée (pas implémentés dans
+> `Liyanza-backend`, ni dans un unique `Liyanza-ia`) :
+>
+> - `kiyanza_assistant_ia` — chatbot conversationnel ("Poser une
+>   question") → voir `docs/canevas-ia-chatbot.md` pour le canevas détaillé
+>   remis à cette équipe (contrat, auth, hébergement, ce qui reste à faire).
+> - `Kidata.2` — simulation/prescription de campagne digitale → voir
+>   `docs/canevas-ia-simulation.md`.
+>
+> Le travail NestJS d'extension du contrat `AskQuestionParams` (§4.2
+> ci-dessous) a été commencé puis **mis en pause à la demande explicite de
+> l'utilisateur** — aucune modification n'a été conservée côté
+> `src/modules/assistant-ia/`. Il reprendra une fois l'un des deux services
+> réellement hébergé et joignable (voir la section 8 des deux canevas :
+> "ce qu'il faut me communiquer une fois hébergé").
+>
+> Le reste de ce document (analyse initiale, écarts, options d'hébergement)
+> reste pertinent comme référence historique et n'a pas besoin d'être relu
+> en entier — les deux canevas ci-dessus sont les documents à jour à suivre
+> désormais.
+
 Ce document existe pour respecter la frontière IA décrite dans `CLAUDE.md` §2
 et `.claude/skills/liyanza-ia-boundary/SKILL.md` : toute évolution du contrat
 entre ce repo (NestJS, mocké) et le futur service d'inférence réel doit être

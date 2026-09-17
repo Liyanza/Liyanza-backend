@@ -106,11 +106,25 @@ model User {
   firstName     String
   lastName      String
   email         String    @unique
-  password      String
-  phone         String
+  // Nullable depuis BACK-505 (connexion Google/Facebook) : un compte créé
+  // via OAuth n'a jamais de mot de passe local. `AuthService.login()` gère
+  // déjà ce cas nativement (compare contre un hash leurre si `null`, voir
+  // DUMMY_BCRYPT_HASH) — aucune régression sur le login par mot de passe.
+  password String?
+  // Nullable pour la même raison : un profil Google/Facebook ne fournit
+  // jamais de numéro de téléphone. Colonne non consommée pour l'envoi de
+  // notifications (SMS non implémenté) — vérifié avant ce changement.
+  phone         String?
   role          Role
   createdAt     DateTime  @default(now())
   deactivatedAt DateTime?
+
+  // BACK-505 — identifiants externes liant un compte à un provider OAuth.
+  // Un même provider ne peut être lié qu'à un seul compte Liyanza (@unique).
+  // Nullable : la grande majorité des comptes (inscription email/mot de
+  // passe) n'en ont aucun.
+  googleId   String? @unique
+  facebookId String? @unique
 
   companyId String?
   company   Company? @relation(fields: [companyId], references: [id])

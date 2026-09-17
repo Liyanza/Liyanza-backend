@@ -8,10 +8,18 @@ import { AuthService } from './auth.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
 import { Prisma, Role } from '@prisma/client';
+import { EMAIL_PROVIDER_TOKEN } from '../mail/interfaces/email-provider.interface';
+import {
+  GOOGLE_OAUTH_CLIENT_TOKEN,
+  FACEBOOK_OAUTH_CLIENT_TOKEN,
+} from './clients/oauth-login-client.interface';
 
 type MockedPrisma = {
   user: {
     findUnique: jest.Mock;
+    findUniqueOrThrow: jest.Mock;
+    create: jest.Mock;
+    update: jest.Mock;
   };
 };
 
@@ -20,6 +28,16 @@ describe('AuthService', () => {
   let prisma: MockedPrisma;
   let jwtService: jest.Mocked<JwtService>;
   let redisService: jest.Mocked<RedisService>;
+  let emailProvider: { send: jest.Mock };
+  let googleClient: {
+    getAuthorizationUrl: jest.Mock;
+    exchangeCodeForProfile: jest.Mock;
+  };
+  let facebookClient: {
+    getAuthorizationUrl: jest.Mock;
+    exchangeCodeForProfile: jest.Mock;
+  };
+  let configService: { get: jest.Mock; getOrThrow: jest.Mock };
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -30,7 +48,9 @@ describe('AuthService', () => {
           useValue: {
             user: {
               findUnique: jest.fn(),
+              findUniqueOrThrow: jest.fn(),
               create: jest.fn(),
+              update: jest.fn(),
             },
           },
         },
@@ -56,6 +76,25 @@ describe('AuthService', () => {
           provide: ConfigService,
           useValue: {
             get: jest.fn(),
+            getOrThrow: jest.fn(),
+          },
+        },
+        {
+          provide: EMAIL_PROVIDER_TOKEN,
+          useValue: { send: jest.fn().mockResolvedValue(undefined) },
+        },
+        {
+          provide: GOOGLE_OAUTH_CLIENT_TOKEN,
+          useValue: {
+            getAuthorizationUrl: jest.fn(),
+            exchangeCodeForProfile: jest.fn(),
+          },
+        },
+        {
+          provide: FACEBOOK_OAUTH_CLIENT_TOKEN,
+          useValue: {
+            getAuthorizationUrl: jest.fn(),
+            exchangeCodeForProfile: jest.fn(),
           },
         },
       ],
@@ -65,6 +104,13 @@ describe('AuthService', () => {
     prisma = module.get(PrismaService);
     jwtService = module.get(JwtService);
     redisService = module.get(RedisService);
+    emailProvider = module.get(EMAIL_PROVIDER_TOKEN);
+    googleClient = module.get(GOOGLE_OAUTH_CLIENT_TOKEN);
+    facebookClient = module.get(FACEBOOK_OAUTH_CLIENT_TOKEN);
+    configService = module.get(ConfigService);
+    configService.getOrThrow.mockImplementation(
+      (key: string) => `config:${key}`,
+    );
   });
 
   describe('register', () => {
@@ -352,6 +398,369 @@ describe('AuthService', () => {
       await expect(service.refresh('presented-token')).rejects.toThrow(
         UnauthorizedException,
       );
+    });
+  });
+
+  describe('forgotPassword', () => {
+    const dto = { email: 'user@test.com' };
+
+    it('should return success without sending an email when no account matches (anti-enumeration)', async () => {
+      prisma.user.findUnique.mockResolvedValue(null);
+
+      const result = await service.forgotPassword(dto);
+
+      expect(result).toEqual({ success: true });
+      expect(emailProvider.send).not.toHaveBeenCalled();
+      expect(redisService.set).not.toHaveBeenCalled();
+    });
+
+    it('should return success without sending an email for a deactivated account', async () => {
+      prisma.user.findUnique.mockResolvedValue({
+        id: 'u1',
+        email: dto.email,
+        password: 'hashed',
+        deactivatedAt: new Date(),
+      });
+
+      await service.forgotPassword(dto);
+
+      expect(emailProvider.send).not.toHaveBeenCalled();
+    });
+
+    // Un compte 100% Google/Facebook n'a pas de mot de passe local à
+    // réinitialiser — même comportement uniforme (toujours success) que les
+    // autres branches anti-énumération ci-dessus.
+    it('should return success without sending an email for an OAuth-only account (no local password)', async () => {
+      prisma.user.findUnique.mockResolvedValue({
+        id: 'u1',
+        email: dto.email,
+        password: null,
+        deactivatedAt: null,
+      });
+
+      await service.forgotPassword(dto);
+
+      expect(emailProvider.send).not.toHaveBeenCalled();
+    });
+
+    it('should store a single-use token in Redis and email the reset link for an eligible account', async () => {
+      prisma.user.findUnique.mockResolvedValue({
+        id: 'u1',
+        email: dto.email,
+        firstName: 'Jane',
+        password: 'hashed',
+        deactivatedAt: null,
+      });
+      configService.getOrThrow.mockImplementation((key: string) =>
+        key === 'PASSWORD_RESET_URL'
+          ? 'https://app.liyanza.com/reset-password'
+          : `config:${key}`,
+      );
+
+      await service.forgotPassword(dto);
+
+      expect(redisService.set).toHaveBeenCalledWith(
+        expect.stringMatching(/^password-reset:/),
+        'u1',
+        expect.any(Number),
+      );
+      expect(emailProvider.send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          to: dto.email,
+          text: expect.stringContaining(
+            'https://app.liyanza.com/reset-password?token=',
+          ) as unknown,
+        }),
+      );
+    });
+
+    it('should not let an email delivery failure bubble up to the caller', async () => {
+      prisma.user.findUnique.mockResolvedValue({
+        id: 'u1',
+        email: dto.email,
+        firstName: 'Jane',
+        password: 'hashed',
+        deactivatedAt: null,
+      });
+      emailProvider.send.mockRejectedValue(new Error('SMTP down'));
+
+      await expect(service.forgotPassword(dto)).resolves.toEqual({
+        success: true,
+      });
+    });
+  });
+
+  describe('resetPassword', () => {
+    it('should throw UnauthorizedException for an invalid or expired token', async () => {
+      redisService.getDel.mockResolvedValue(null);
+
+      await expect(
+        service.resetPassword({ token: 'bad', newPassword: 'NewPassword1' }),
+      ).rejects.toThrow(UnauthorizedException);
+      expect(prisma.user.update).not.toHaveBeenCalled();
+    });
+
+    // CORRECTIF AUDIT (cohérence) : une réinitialisation doit révoquer toutes
+    // les sessions existantes, pas seulement changer le mot de passe.
+    it('should update the password and revoke every existing session', async () => {
+      redisService.getDel.mockResolvedValue('u1');
+
+      const result = await service.resetPassword({
+        token: 'good-token',
+        newPassword: 'NewPassword1',
+      });
+
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { id: 'u1' },
+        data: { password: expect.any(String) as unknown },
+      });
+      expect(redisService.delByPattern).toHaveBeenCalledWith('refresh:u1:*');
+      expect(result).toEqual({ success: true });
+    });
+  });
+
+  describe('startOAuthLogin', () => {
+    it('should store an anti-CSRF state in Redis and return the provider authorization URL', async () => {
+      googleClient.getAuthorizationUrl.mockReturnValue(
+        'https://accounts.google.com/o/oauth2/v2/auth?...',
+      );
+
+      const result = await service.startOAuthLogin('google');
+
+      expect(redisService.set).toHaveBeenCalledWith(
+        expect.stringMatching(/^oauth-login-state:/),
+        '1',
+        expect.any(Number),
+      );
+      expect(result).toEqual({
+        authorizationUrl: 'https://accounts.google.com/o/oauth2/v2/auth?...',
+      });
+    });
+
+    it('should use the Facebook client for the facebook provider', async () => {
+      facebookClient.getAuthorizationUrl.mockReturnValue(
+        'https://facebook.com/dialog/oauth?...',
+      );
+
+      const result = await service.startOAuthLogin('facebook');
+
+      expect(googleClient.getAuthorizationUrl).not.toHaveBeenCalled();
+      expect(result.authorizationUrl).toBe(
+        'https://facebook.com/dialog/oauth?...',
+      );
+    });
+  });
+
+  describe('handleOAuthLoginCallback', () => {
+    beforeEach(() => {
+      configService.getOrThrow.mockImplementation((key: string) =>
+        key === 'OAUTH_LOGIN_REDIRECT_URL'
+          ? 'https://app.liyanza.com/connexion/oauth-callback'
+          : `config:${key}`,
+      );
+    });
+
+    it('should redirect with reason=denied without consuming the state when the provider reports an error', async () => {
+      const result = await service.handleOAuthLoginCallback('google', {
+        state: 's1',
+        error: 'access_denied',
+      });
+
+      expect(redisService.getDel).not.toHaveBeenCalled();
+      expect(result.redirectUrl).toContain('status=error');
+      expect(result.redirectUrl).toContain('reason=denied');
+    });
+
+    it('should redirect with reason=invalid_or_expired_state when the state cannot be consumed', async () => {
+      redisService.getDel.mockResolvedValue(null);
+
+      const result = await service.handleOAuthLoginCallback('google', {
+        state: 'replayed-or-unknown',
+        code: 'abc',
+      });
+
+      expect(result.redirectUrl).toContain('reason=invalid_or_expired_state');
+    });
+
+    it('should redirect with reason=missing_code when the callback has no code', async () => {
+      redisService.getDel.mockResolvedValue('1');
+
+      const result = await service.handleOAuthLoginCallback('google', {
+        state: 's1',
+      });
+
+      expect(result.redirectUrl).toContain('reason=missing_code');
+    });
+
+    it('should redirect with reason=exchange_failed when the provider client throws', async () => {
+      redisService.getDel.mockResolvedValue('1');
+      googleClient.exchangeCodeForProfile.mockRejectedValue(
+        new Error('Google OAuth token exchange failed'),
+      );
+
+      const result = await service.handleOAuthLoginCallback('google', {
+        state: 's1',
+        code: 'abc',
+      });
+
+      expect(result.redirectUrl).toContain('reason=exchange_failed');
+    });
+
+    it('should create a new COMMUNITY_MANAGER user with no company on first login, issue tokens and return a one-time exchange code', async () => {
+      redisService.getDel.mockResolvedValue('1');
+      googleClient.exchangeCodeForProfile.mockResolvedValue({
+        providerId: 'google-sub-1',
+        email: 'new-oauth-user@test.com',
+        firstName: 'Ada',
+        lastName: 'Lovelace',
+      });
+      prisma.user.findUnique.mockResolvedValue(null); // ni par googleId, ni par email
+      prisma.user.create.mockResolvedValue({
+        id: 'u-new',
+        email: 'new-oauth-user@test.com',
+        firstName: 'Ada',
+        lastName: 'Lovelace',
+        role: Role.COMMUNITY_MANAGER,
+        companyId: null,
+        deactivatedAt: null,
+      });
+      jwtService.sign.mockReturnValueOnce('access-token');
+      jwtService.sign.mockReturnValueOnce('refresh-token');
+
+      const result = await service.handleOAuthLoginCallback('google', {
+        state: 's1',
+        code: 'abc',
+      });
+
+      expect(prisma.user.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          role: Role.COMMUNITY_MANAGER,
+          companyId: null,
+          password: null,
+          googleId: 'google-sub-1',
+        }) as unknown,
+      });
+      expect(redisService.set).toHaveBeenCalledWith(
+        expect.stringMatching(/^oauth-exchange:/),
+        expect.stringContaining('access-token') as unknown,
+        expect.any(Number),
+      );
+      expect(result.redirectUrl).toContain('status=success');
+      expect(result.redirectUrl).toContain('code=');
+    });
+
+    // Une même personne inscrite par email/mot de passe qui se connecte
+    // ensuite via Google doit être RATTACHÉE à son compte existant, jamais
+    // dupliquée — `email` est l'identifiant métier unique.
+    it('should link an existing email/password account instead of creating a duplicate', async () => {
+      redisService.getDel.mockResolvedValue('1');
+      googleClient.exchangeCodeForProfile.mockResolvedValue({
+        providerId: 'google-sub-2',
+        email: 'existing@test.com',
+        firstName: 'Existing',
+        lastName: 'User',
+      });
+      prisma.user.findUnique
+        .mockResolvedValueOnce(null) // pas encore lié par googleId
+        .mockResolvedValueOnce({
+          id: 'u-existing',
+          email: 'existing@test.com',
+          deactivatedAt: null,
+        }); // déjà inscrit par mot de passe
+      prisma.user.update.mockResolvedValue({
+        id: 'u-existing',
+        email: 'existing@test.com',
+        deactivatedAt: null,
+      });
+      jwtService.sign.mockReturnValue('token');
+
+      await service.handleOAuthLoginCallback('google', {
+        state: 's1',
+        code: 'abc',
+      });
+
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { id: 'u-existing' },
+        data: { googleId: 'google-sub-2' },
+      });
+      expect(prisma.user.create).not.toHaveBeenCalled();
+    });
+
+    it('should reuse the account already linked to this provider id, without re-querying by email', async () => {
+      redisService.getDel.mockResolvedValue('1');
+      googleClient.exchangeCodeForProfile.mockResolvedValue({
+        providerId: 'google-sub-3',
+        email: 'already-linked@test.com',
+        firstName: 'Already',
+        lastName: 'Linked',
+      });
+      prisma.user.findUnique.mockResolvedValueOnce({
+        id: 'u-linked',
+        email: 'already-linked@test.com',
+        deactivatedAt: null,
+      });
+      jwtService.sign.mockReturnValue('token');
+
+      await service.handleOAuthLoginCallback('google', {
+        state: 's1',
+        code: 'abc',
+      });
+
+      expect(prisma.user.findUnique).toHaveBeenCalledTimes(1);
+      expect(prisma.user.create).not.toHaveBeenCalled();
+      expect(prisma.user.update).not.toHaveBeenCalled();
+    });
+
+    it('should redirect with reason=account_disabled for a deactivated account', async () => {
+      redisService.getDel.mockResolvedValue('1');
+      googleClient.exchangeCodeForProfile.mockResolvedValue({
+        providerId: 'google-sub-4',
+        email: 'disabled@test.com',
+        firstName: 'Disabled',
+        lastName: 'User',
+      });
+      prisma.user.findUnique.mockResolvedValueOnce({
+        id: 'u-disabled',
+        email: 'disabled@test.com',
+        deactivatedAt: new Date(),
+      });
+
+      const result = await service.handleOAuthLoginCallback('google', {
+        state: 's1',
+        code: 'abc',
+      });
+
+      expect(result.redirectUrl).toContain('reason=account_disabled');
+      expect(jwtService.sign).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('exchangeOAuthCode', () => {
+    it('should throw UnauthorizedException for an invalid or expired exchange code', async () => {
+      redisService.getDel.mockResolvedValue(null);
+
+      await expect(
+        service.exchangeOAuthCode({ code: 'bad-or-replayed' }),
+      ).rejects.toThrow(UnauthorizedException);
+    });
+
+    it('should return the parsed token pair for a valid exchange code (single use, via GETDEL)', async () => {
+      const payload = {
+        accessToken: 'a',
+        refreshToken: 'r',
+        user: {
+          id: 'u1',
+          email: 'user@test.com',
+          firstName: 'A',
+          lastName: 'B',
+          role: Role.COMMUNITY_MANAGER,
+        },
+      };
+      redisService.getDel.mockResolvedValue(JSON.stringify(payload));
+
+      const result = await service.exchangeOAuthCode({ code: 'good-code' });
+
+      expect(result).toEqual(payload);
     });
   });
 

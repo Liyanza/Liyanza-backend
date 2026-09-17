@@ -1,10 +1,22 @@
-import { Controller, Post, Get, Body, Request } from '@nestjs/common';
+import {
+  Controller,
+  Post,
+  Get,
+  Body,
+  Query,
+  Param,
+  Request,
+  Redirect,
+  HttpStatus,
+  BadRequestException,
+} from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { Request as ExpressRequest } from 'express';
 import { Role } from '@prisma/client';
 import {
   ApiBearerAuth,
   ApiOperation,
+  ApiParam,
   ApiResponse,
   ApiTags,
 } from '@nestjs/swagger';
@@ -13,9 +25,23 @@ import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { LogoutDto } from './dto/logout.dto';
+import { ForgotPasswordDto } from './dto/forgot-password.dto';
+import { ResetPasswordDto } from './dto/reset-password.dto';
+import { OAuthLoginCallbackQueryDto } from './dto/oauth-login-callback-query.dto';
+import { OAuthExchangeDto } from './dto/oauth-exchange.dto';
 import { Public } from './decorators/public.decorator';
 import { Roles } from './decorators/roles.decorator';
 import { AuthenticatedUser } from './interfaces/authenticated-user.interface';
+
+const OAUTH_PROVIDERS = ['google', 'facebook'] as const;
+type OAuthProviderParam = (typeof OAUTH_PROVIDERS)[number];
+
+function parseOAuthProvider(value: string): OAuthProviderParam {
+  if ((OAUTH_PROVIDERS as readonly string[]).includes(value)) {
+    return value as OAuthProviderParam;
+  }
+  throw new BadRequestException(`Unsupported OAuth provider: ${value}`);
+}
 
 interface AuthenticatedRequest extends ExpressRequest {
   user: AuthenticatedUser;
@@ -64,6 +90,103 @@ export class AuthController {
   })
   async refresh(@Body() dto: RefreshTokenDto) {
     return this.authService.refresh(dto.refreshToken);
+  }
+
+  // ------------------------------------------------------------------
+  // BACK-505 — Connexion Google/Facebook. DISTINCT du flow OAuth Meta de
+  // `SocialAccountsController` (`/social-accounts/oauth/...`), qui lie un
+  // compte pro à une campagne pour un utilisateur DÉJÀ authentifié — ici
+  // l'appelant est anonyme, c'est justement le but de la route.
+  // ------------------------------------------------------------------
+
+  @Public()
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Get(':provider(google|facebook)')
+  @ApiParam({ name: 'provider', enum: OAUTH_PROVIDERS })
+  @ApiOperation({ summary: 'Start the Google/Facebook login OAuth flow' })
+  @ApiResponse({
+    status: 302,
+    description: 'Redirect to the provider consent screen',
+  })
+  async startOAuthLogin(@Param('provider') providerParam: string) {
+    const provider = parseOAuthProvider(providerParam);
+    return this.authService.startOAuthLogin(provider);
+  }
+
+  // SÉCURITÉ : callback public appelé DIRECTEMENT par Google/Facebook après
+  // consentement de l'utilisateur — jamais de JWT à ce stade (l'utilisateur
+  // n'est pas encore authentifié). Throttle aligné sur le callback OAuth Meta
+  // déjà en place (`GET /social-accounts/oauth/callback`, 30/min) : même
+  // nature de trafic (redirection navigateur après interaction humaine).
+  // Protégé par un `state` à usage unique consommé atomiquement dans Redis.
+  @Public()
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @Get(':provider(google|facebook)/callback')
+  @Redirect()
+  @ApiParam({ name: 'provider', enum: OAUTH_PROVIDERS })
+  @ApiOperation({
+    summary:
+      'Google/Facebook login callback (called by the provider, not by API clients)',
+  })
+  @ApiResponse({
+    status: 302,
+    description: 'Redirect to the frontend result page',
+  })
+  async oauthLoginCallback(
+    @Param('provider') providerParam: string,
+    @Query() query: OAuthLoginCallbackQueryDto,
+  ) {
+    const provider = parseOAuthProvider(providerParam);
+    const { redirectUrl } = await this.authService.handleOAuthLoginCallback(
+      provider,
+      query,
+    );
+    return { url: redirectUrl, statusCode: HttpStatus.FOUND };
+  }
+
+  @Public()
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Post('oauth/exchange')
+  @ApiOperation({
+    summary:
+      'Exchange a short-lived OAuth login code (from the redirect URL) for an access/refresh token pair',
+  })
+  @ApiResponse({ status: 201, description: 'Authenticated' })
+  @ApiResponse({ status: 401, description: 'Invalid or expired exchange code' })
+  async exchangeOAuthCode(@Body() dto: OAuthExchangeDto) {
+    return this.authService.exchangeOAuthCode(dto);
+  }
+
+  // ------------------------------------------------------------------
+  // BACK-506 — Réinitialisation de mot de passe
+  // ------------------------------------------------------------------
+
+  @Public()
+  @Throttle({ default: { limit: 5, ttl: 60_000 } }) // même limite que login/register — vecteur d'énumération/spam
+  @Post('forgot-password')
+  @ApiOperation({ summary: 'Request a password reset link by email' })
+  @ApiResponse({
+    status: 201,
+    description:
+      'Always returns success, regardless of whether the email exists',
+  })
+  async forgotPassword(@Body() dto: ForgotPasswordDto) {
+    return this.authService.forgotPassword(dto);
+  }
+
+  @Public()
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @Post('reset-password')
+  @ApiOperation({
+    summary: 'Reset the password using a (single-use) reset token',
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'Password updated, all sessions revoked',
+  })
+  @ApiResponse({ status: 401, description: 'Invalid or expired reset token' })
+  async resetPassword(@Body() dto: ResetPasswordDto) {
+    return this.authService.resetPassword(dto);
   }
 
   // Protégé par le JwtAuthGuard global (aucun décorateur nécessaire).

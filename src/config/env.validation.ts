@@ -241,6 +241,71 @@ export class EnvironmentVariables {
   @IsString()
   @IsNotEmpty()
   SOCIAL_OAUTH_MOBILE_REDIRECT_URL!: string;
+
+  /**
+   * BACK-505 — Connexion (login) via Google/Facebook, DISTINCTE du flow Meta
+   * ci-dessus (BACK-502/503) qui sert uniquement à lier un compte
+   * Facebook/Instagram professionnel à une campagne, jamais à authentifier
+   * un utilisateur Liyanza. Un utilisateur anonyme n'a ni JWT ni contexte
+   * entreprise : le `state` OAuth ici n'est qu'un nonce anti-CSRF (pas de
+   * payload chiffré à restituer), voir `AuthService.startOAuthLogin()`.
+   *
+   * Google : app dédiée sur console.cloud.google.com (écran de consentement
+   * OAuth + identifiants "ID client OAuth" de type "Application Web").
+   */
+  @IsDefined()
+  @IsString()
+  GOOGLE_CLIENT_ID!: string;
+
+  @IsDefined()
+  @IsString()
+  GOOGLE_CLIENT_SECRET!: string;
+
+  /**
+   * URL publique de CE backend pour le callback Google — doit être
+   * enregistrée telle quelle dans "URI de redirection autorisés" côté
+   * Google Cloud Console.
+   */
+  @IsDefined()
+  @IsUrl({ require_tld: false, protocols: ['http', 'https'] })
+  GOOGLE_OAUTH_REDIRECT_URI!: string;
+
+  /**
+   * Connexion Facebook : réutilise volontairement META_APP_ID/META_APP_SECRET
+   * (même App Meta for Developers, produit "Connexion Facebook" activé en
+   * plus du produit Marketing API déjà utilisé pour BACK-502/503) — inutile
+   * de dupliquer la création d'une seconde App pour un même fournisseur.
+   * Seule l'URI de redirection diffère (et doit donc être enregistrée EN
+   * PLUS de META_OAUTH_REDIRECT_URI dans "Valid OAuth Redirect URIs").
+   */
+  @IsDefined()
+  @IsUrl({ require_tld: false, protocols: ['http', 'https'] })
+  FACEBOOK_LOGIN_REDIRECT_URI!: string;
+
+  /**
+   * Page du frontend (Liyanza, Next.js) vers laquelle ce backend redirige le
+   * navigateur une fois la connexion Google/Facebook traitée. Ne porte
+   * JAMAIS les tokens en clair dans l'URL (fuite possible via historique
+   * navigateur/logs/Referer) : seulement un code d'échange à usage unique et
+   * de très courte durée de vie, consommé par `POST /auth/oauth/exchange`
+   * (voir `AuthService.handleOAuthLoginCallback()`).
+   */
+  @IsDefined()
+  @IsUrl({ require_tld: false, protocols: ['http', 'https'] })
+  OAUTH_LOGIN_REDIRECT_URL!: string;
+
+  /**
+   * BACK-506 — Réinitialisation de mot de passe. Page du frontend affichant
+   * le formulaire "nouveau mot de passe", à laquelle on ajoute `?token=...`
+   * dans l'email envoyé à l'utilisateur. Le token lui-même n'est jamais un
+   * JWT : comme le `state` OAuth ci-dessus, c'est un secret aléatoire à
+   * usage unique dont la seule source de vérité est Redis (GETDEL), cohérent
+   * avec le garde-fou n°5 (jamais de vérité côté client sur un token à usage
+   * unique).
+   */
+  @IsDefined()
+  @IsUrl({ require_tld: false, protocols: ['http', 'https'] })
+  PASSWORD_RESET_URL!: string;
 }
 
 export function validate(config: Record<string, unknown>) {
