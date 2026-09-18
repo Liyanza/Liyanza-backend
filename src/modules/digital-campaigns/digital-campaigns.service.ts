@@ -260,6 +260,13 @@ export class DigitalCampaignsService {
         predictedRoas: result.predictedRoas,
         narrativeSummary: result.narrativeSummary,
         warnings: result.warnings,
+        avgCpc: result.avgCpc,
+        costPerAcquisition: result.costPerAcquisition,
+        conversionRate: result.conversionRate,
+        scenarios: result.scenarios as unknown as Prisma.InputJsonValue,
+        channelBreakdown:
+          result.channelBreakdown as unknown as Prisma.InputJsonValue,
+        weeklySeries: result.weeklySeries as unknown as Prisma.InputJsonValue,
       },
     });
   }

@@ -58,6 +58,9 @@ enum DigitalObjective {
   AWARENESS
   ENGAGEMENT
   CONVERSION
+  LEADS
+  SALES
+  TRAFFIC
 }
 
 enum BudgetAllocationType {
@@ -598,11 +601,19 @@ model PlatformMetric {
   @@index([fetchedAt])
 }
 
-/// Résultat d'une simulation de campagne digitale. Forme alignée sur le
-/// contrat du futur moteur réel (voir `docs/architecture.md`, section
-/// « Contrat IA — Simulation digitale ») pour qu'un branchement ultérieur sur
-/// Liyanza-ia n'exige aucune migration. Modèle séparé de `Simulation`
-/// (BACK-104/207, questionnaire libre) : ne touche pas au flux existant.
+/// Résultat d'une simulation de campagne digitale. Modèle séparé de
+/// `Simulation` (BACK-104/207, questionnaire libre) : ne touche pas au flux
+/// existant.
+///
+/// `scenarios`/`channelBreakdown`/`weeklySeries` : extension délibérée du
+/// contrat minimal d'origine (aligné sur `simulate_full`, voir
+/// `docs/architecture.md` §6) pour couvrir l'écran de résultats détaillé
+/// (comparaison de scénarios, détail par canal, courbe hebdomadaire). Cette
+/// forme riche N'A PAS été validée contre le futur vrai moteur Liyanza-ia —
+/// contrairement au reste du contrat, elle devra probablement être ajustée
+/// lors du branchement réel. Stockées en JSON (comme `inputSnapshot`) plutôt
+/// qu'en tables normalisées : ce sont des instantanés d'un moteur externe
+/// opaque, jamais interrogées indépendamment du `DigitalSimulation` parent.
 model DigitalSimulation {
   id            String   @id @default(cuid())
   simulatedAt   DateTime @default(now())
@@ -614,6 +625,22 @@ model DigitalSimulation {
   predictedRoas           Float?
   narrativeSummary        String?  @db.Text
   warnings                String[]
+
+  // KPI agrégés du scénario recommandé — voir DigitalSimulationScenario[].
+  avgCpc             Float?
+  costPerAcquisition Float?
+  conversionRate     Float?
+
+  /// DigitalSimulationScenarioSnapshot[] — un par scénario comparé (A/B/C).
+  scenarios Json @default("[]")
+  /// DigitalSimulationChannelSnapshot[] — détail du scénario recommandé,
+  /// un par canal réellement sélectionné (jamais WhatsApp/TikTok/YouTube,
+  /// non intégrés — voir DigitalCampaignsService.buildSimulationExtras).
+  channelBreakdown Json @default("[]")
+  /// DigitalSimulationWeekSnapshot[] — évolution hebdomadaire du scénario
+  /// recommandé, sur la durée de la campagne (5 semaines max, voir
+  /// DigitalCampaignsService.buildSimulationExtras).
+  weeklySeries Json @default("[]")
 
   campaignId String
   campaign   Campaign @relation(fields: [campaignId], references: [id])

@@ -36,8 +36,15 @@ interface AuthenticatedRequest extends ExpressRequest {
 export class CampagnesController {
   constructor(private readonly campagnesService: CampagnesService) {}
 
+  // BACK-501 (campagnes digitales) : la création/consultation d'une campagne
+  // est ouverte au COMMUNITY_MANAGER, même principe que
+  // `DigitalCampaignsController` (créer le contenu d'une campagne n'est pas
+  // une action d'infrastructure). `update`/`lancer` ci-dessous restent
+  // réservés à ADMIN/MARKETING_MANAGER : faire évoluer/lancer une campagne
+  // déjà créée est un geste différent, jamais appelé par l'assistant de
+  // création digitale.
   @Post()
-  @Roles(Role.ADMIN, Role.MARKETING_MANAGER)
+  @Roles(Role.ADMIN, Role.MARKETING_MANAGER, Role.COMMUNITY_MANAGER)
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Create a campaign (status DRAFT)' })
   @ApiResponse({ status: 201, description: 'Campaign created' })
@@ -49,7 +56,7 @@ export class CampagnesController {
   }
 
   @Get()
-  @Roles(Role.ADMIN, Role.MARKETING_MANAGER)
+  @Roles(Role.ADMIN, Role.MARKETING_MANAGER, Role.COMMUNITY_MANAGER)
   @ApiOperation({ summary: "List the caller's company campaigns" })
   @ApiResponse({ status: 200, description: 'Paginated campaign list' })
   async findAll(
@@ -61,7 +68,7 @@ export class CampagnesController {
   }
 
   @Get(':id')
-  @Roles(Role.ADMIN, Role.MARKETING_MANAGER)
+  @Roles(Role.ADMIN, Role.MARKETING_MANAGER, Role.COMMUNITY_MANAGER)
   @ApiOperation({ summary: 'Get a campaign by id' })
   @ApiResponse({ status: 200, description: 'Campaign found' })
   @ApiResponse({ status: 404, description: 'Campaign not found' })

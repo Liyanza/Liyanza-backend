@@ -388,6 +388,37 @@ DigitalSimulationEngineInterface` et changer le `provide:
 DIGITAL_SIMULATION_ENGINE_TOKEN` dans `DigitalCampaignsModule` — **aucune
 migration Prisma, aucun changement de DTO côté mobile**.
 
+### 6.3.1 Extension (2026-09-18) — écran de résultats détaillé
+
+**⚠️ Contrairement au reste de ce contrat, cette extension n'a PAS été
+validée contre le vrai moteur `Liyanza-ia`** — ajoutée uniquement pour
+couvrir la maquette web de l'écran de résultats (comparaison de scénarios,
+détail par canal, courbe hebdomadaire), sans confirmation que `simulate_full`
+produira un jour cette forme précise. À réévaluer lors du branchement réel.
+
+```ts
+interface DigitalSimulationResult {
+  // ... champs §6.3 inchangés, plus :
+  avgCpc: number;
+  costPerAcquisition: number;
+  conversionRate: number; // pourcentage, ex: 2.1 pour 2,1%
+  scenarios: DigitalSimulationScenarioSnapshot[]; // A/B/C comparés
+  channelBreakdown: DigitalSimulationChannelSnapshot[]; // détail du scénario recommandé, par canal réellement sélectionné (jamais WhatsApp/TikTok/YouTube)
+  weeklySeries: DigitalSimulationWeekSnapshot[]; // évolution du scénario recommandé, 5 points fixes faute de durée de campagne en entrée (voir §6.2)
+}
+```
+
+Formes complètes de `DigitalSimulationScenarioSnapshot`/
+`DigitalSimulationChannelSnapshot`/`DigitalSimulationWeekSnapshot` : voir
+`src/modules/digital-campaigns/clients/digital-simulation-engine.interface.ts`.
+Persistées en JSON sur `DigitalSimulation` (`scenarios`, `channelBreakdown`,
+`weeklySeries`), pas en tables normalisées — instantanés d'un moteur externe
+opaque, jamais interrogés indépendamment de la simulation parente.
+
+Migration associée : `20260918112955_extend_digital_objective_and_simulation_results`
+(ajoute aussi `LEADS`/`SALES`/`TRAFFIC` à `DigitalObjective`, pour couvrir les
+6 objectifs de la maquette au lieu des 3 objectifs Meta Ads d'origine).
+
 ### 6.4 Ce qui reste hors périmètre de ce repo
 
 - Le calcul de la prédiction elle-même (`DigitalSimulationEngineMock` génère
