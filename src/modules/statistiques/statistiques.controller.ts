@@ -49,7 +49,10 @@ export class StatistiquesController {
   }
 
   @Get('dashboard')
-  @Roles(Role.ADMIN, Role.MARKETING_MANAGER)
+  // ← étendu au COMMUNITY_MANAGER : ce rôle peut déjà créer/lister des
+  // campagnes (voir CampagnesController) et donc déjà voir leurs budgets
+  // individuels ; l'agrégat entreprise ne l'expose à rien de plus.
+  @Roles(Role.ADMIN, Role.MARKETING_MANAGER, Role.COMMUNITY_MANAGER)
   @ApiOperation({ summary: 'Get the company-wide dashboard aggregate' })
   @ApiResponse({ status: 200, description: 'Dashboard aggregate' })
   async getDashboard(@Request() req: AuthenticatedRequest) {
