@@ -37,10 +37,12 @@ const SAFE_SELECT = {
   connectedById: true,
 } satisfies Prisma.SocialAccountSelect;
 
-// 10 minutes : assez large pour une autorisation Meta manuelle (le temps
+// 15 minutes : assez large pour une autorisation Meta manuelle (le temps
 // d'un login + consentement dans une webview), assez court pour limiter la
-// fenêtre d'un `state` intercepté mais jamais utilisé.
-const OAUTH_STATE_TTL_SECONDS = 600;
+// fenêtre d'un `state` intercepté mais jamais utilisé. Porté de 10 à 15
+// minutes après un cas réel où le flow Facebook (BACK-505, même mécanisme
+// de `state`) a dépassé les 10 minutes initiales.
+const OAUTH_STATE_TTL_SECONDS = 900;
 
 const REQUESTED_SCOPES: Record<SocialPlatform, string[]> = {
   [SocialPlatform.FACEBOOK]: [

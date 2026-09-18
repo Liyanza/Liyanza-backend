@@ -204,7 +204,7 @@ describe('SocialAccountsService', () => {
         companyId: 'company-1',
         platform: SocialPlatform.FACEBOOK,
       });
-      expect(ttl).toBe(600);
+      expect(ttl).toBe(900);
 
       const url = new URL(result.authorizationUrl);
       expect(url.hostname).toBe('www.facebook.com');

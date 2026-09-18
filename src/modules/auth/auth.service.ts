@@ -45,10 +45,13 @@ const DUMMY_BCRYPT_HASH =
 
 const SALT_ROUNDS = 10;
 
-// 10 minutes : même durée que le `state` OAuth Meta (social-accounts), pour
+// 15 minutes : même durée que le `state` OAuth Meta (social-accounts), pour
 // la même raison (assez large pour un login + consentement manuel, assez
 // court pour limiter la fenêtre d'un `state` intercepté mais jamais utilisé).
-const OAUTH_STATE_TTL_SECONDS = 600;
+// Porté de 10 à 15 minutes après un cas réel où le flow Facebook (saisie
+// d'identifiants + écran d'autorisations, sans session Facebook déjà
+// ouverte dans le navigateur) a dépassé les 10 minutes initiales.
+const OAUTH_STATE_TTL_SECONDS = 900;
 
 // 60 secondes : le temps d'une seule redirection navigateur entre ce backend
 // et la page d'échange du frontend — jamais réutilisé au-delà.
