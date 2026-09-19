@@ -2,7 +2,7 @@ import { Module } from '@nestjs/common';
 import { DigitalCampaignsController } from './digital-campaigns.controller';
 import { DigitalCampaignsService } from './digital-campaigns.service';
 import { PrismaModule } from '../prisma/prisma.module';
-import { DigitalSimulationEngineMock } from './clients/digital-simulation-engine.mock';
+import { DigitalSimulationEngineHeuristic } from './clients/digital-simulation-engine.heuristic';
 import { DIGITAL_SIMULATION_ENGINE_TOKEN } from './clients/digital-simulation-engine.interface';
 
 @Module({
@@ -12,7 +12,7 @@ import { DIGITAL_SIMULATION_ENGINE_TOKEN } from './clients/digital-simulation-en
     DigitalCampaignsService,
     {
       provide: DIGITAL_SIMULATION_ENGINE_TOKEN,
-      useClass: DigitalSimulationEngineMock,
+      useClass: DigitalSimulationEngineHeuristic,
     },
   ],
 })

@@ -419,16 +419,73 @@ Migration associée : `20260918112955_extend_digital_objective_and_simulation_re
 (ajoute aussi `LEADS`/`SALES`/`TRAFFIC` à `DigitalObjective`, pour couvrir les
 6 objectifs de la maquette au lieu des 3 objectifs Meta Ads d'origine).
 
-### 6.4 Ce qui reste hors périmètre de ce repo
+### 6.4 Historique — service externe `Liyanza-ia` tenté puis abandonné (2026-09-19)
 
-- Le calcul de la prédiction elle-même (`DigitalSimulationEngineMock` génère
-  des valeurs pseudo-aléatoires dans la bonne forme, jamais une vraie
-  inférence).
-- Toute logique de machine learning sur les métriques Meta ingérées.
+Une première version de cette section décrivait un repo séparé `Liyanza-ia`
+(FastAPI/Python) appelé en HTTP pour calculer la simulation, avec un
+`narrativeSummary` généré par l'API Claude. Après une analyse à froid des
+besoins réels du projet (demandée explicitement, sans tenir compte des
+contraintes d'architecture par défaut), cette approche a été **abandonnée
+avant tout déploiement** :
 
-Ce qui est réellement implémenté dans ce repo (pas de l'IA) : l'OAuth Meta,
-le chiffrement/stockage des tokens, l'appel à l'API Graph pour ingérer les
-métriques réelles (`SocialAccountsModule`, BACK-502/503), et toute
-l'orchestration NestJS autour de l'appel au moteur mocké (validation,
-persistance, RBAC, gestion d'erreur) — voir `docs/BACKLOG_REORIENTE.md`,
-section « Phase 5 ».
+- **Aucune donnée historique de campagne n'existe** pour entraîner ou
+  calibrer un vrai modèle ML — le calcul reste donc nécessairement
+  heuristique (bornes par objectif), ce qui ne justifie à soi seul ni
+  Python, ni un service séparé : aucune dépendance à un écosystème ML
+  (numpy/pandas/sklearn) n'existe dans ce calcul.
+- **Le seul appel LLM réel (Claude) ne faisait que reformuler des chiffres
+  déjà calculés** — une tâche de templating, pas de raisonnement. Le coût
+  (latence réseau, facturation par appel, point de panne externe,
+  non-déterminisme dans les tests) dépassait la valeur ajoutée réelle par
+  rapport à un gabarit de texte conditionnel.
+- Faire tourner un **troisième service déployé** (hébergement, secret
+  partagé à gérer, réseau, supervision) pour ~150 lignes de calcul était de
+  la complexité anticipée pour un besoin qui n'existe pas encore.
+
+**Décision** : ce calcul reste un module TypeScript ordinaire **dans ce
+repo** (voir §6.5) — aucune violation de la frontière IA du projet, puisque
+ce n'est ni un modèle ML entraîné, ni un appel à une API d'inférence : c'est
+une fonction déterministe, testée comme n'importe quelle autre logique
+métier NestJS. Voir `.claude/skills/liyanza-ia-boundary/SKILL.md` (mis à
+jour en conséquence) pour la frontière précise entre « logique
+déterministe » (autorisée ici) et « inférence réelle » (toujours hors
+périmètre).
+
+Le repo `Liyanza-ia` créé pour cette tentative a été supprimé (jamais
+déployé, jamais commité nulle part). Si un vrai besoin ML apparaît plus
+tard (données réelles collectées, modèle entraîné), l'extraction en service
+séparé redevient pertinente — pas avant.
+
+### 6.5 Implémentation réelle actuelle — `DigitalSimulationEngineHeuristic`
+
+`DigitalSimulationEngineHeuristic`
+(`clients/digital-simulation-engine.heuristic.ts`) est l'implémentation
+**active** (branchée sur `DIGITAL_SIMULATION_ENGINE_TOKEN`) de
+`DigitalSimulationEngineInterface`. Ce n'est plus un mock — les chiffres
+qu'elle produit sont de vraies estimations, pas des valeurs
+pseudo-aléatoires — mais ce n'est pas non plus de l'IA au sens du
+`.claude/skills/liyanza-ia-boundary/SKILL.md` : aucun modèle entraîné,
+aucun appel réseau, 100% déterministe et unit-testable en synchrone.
+
+**Principes** :
+
+- Bornes heuristiques par objectif (`AWARENESS`/`ENGAGEMENT`/`TRAFFIC`/
+  `LEADS`/`CONVERSION`/`SALES`) — **ordres de grandeur généraux issus de
+  benchmarks Meta Ads publiés, pas une calibration Liyanza** (aucune donnée
+  de campagne réelle n'existe encore). À revoir dès que des résultats de
+  campagnes réelles sont collectés (voir `PlatformMetric`).
+- Priorité stricte aux métriques réelles : quand `ChannelMetricsSnapshot`
+  fournit `avgCpm`/`avgCpc`/`followerCount` (ingérés via Meta Graph API,
+  BACK-502/503), elles priment toujours sur les bornes génériques.
+- Une même requête renvoie toujours le même résultat (jitter dérivé d'un
+  hash du payload d'entrée, jamais de `Math.random()`).
+- `narrativeSummary` est un gabarit de texte **conditionnel** (branches
+  selon le ROAS, la présence de métriques réelles, la taille du budget) —
+  pas un appel LLM. Reformuler des chiffres déjà calculés ne justifie pas
+  une dépendance externe.
+
+**Non tranché, à revoir plus tard si besoin** : `average_basket_fcfa`,
+`daily_lead_capacity`, WhatsApp comme canal à part entière — ces points du
+canevas `Kidata.2` (`docs/canevas-ia-simulation.md`) restent valides comme
+pistes d'extension future du contrat, mais ne sont pas repris ici (contrat
+d'entrée inchangé, voir §6.2).
