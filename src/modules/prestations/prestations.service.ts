@@ -17,17 +17,27 @@ import { SoumettrePreuveDto } from './dto/soumettre-preuve.dto';
 import { UpdateStatusDto } from './dto/update-status.dto';
 import { ValidationLinkResponseDto } from './dto/validation-link-response.dto';
 import { ValidationConsultationResponseDto } from './dto/validation-consultation-response.dto';
+import { ProofLinkResponseDto } from './dto/proof-link-response.dto';
+import { ProofLinkConsultationResponseDto } from './dto/proof-link-consultation-response.dto';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { parseDuration } from '../../common/utils/duration.util';
+import {
+  haversineDistanceMeters,
+  isLocationMatch,
+} from '../../common/utils/geo.util';
 import { CampaignStatus, Role } from '@prisma/client';
 
 /** Préfixe Redis utilisé pour le suivi d'usage unique des liens de validation. */
 const VALIDATION_LINK_REDIS_PREFIX = 'validation-link:';
+/** Idem pour les liens de soumission de preuve (prestataire sans compte). */
+const PROOF_LINK_REDIS_PREFIX = 'proof-link:';
+
+type LinkTokenType = 'validation' | 'proof';
 
 interface ValidationTokenPayload {
   sub: string; // installationId
-  type: 'validation';
+  type: LinkTokenType;
   jti: string;
 }
 
@@ -143,6 +153,24 @@ export class PrestationsService {
       );
     }
 
+    return this.createProofRecord(
+      installation,
+      dto,
+      `Proof submitted by ${user.email}`,
+    );
+  }
+
+  /**
+   * Cœur de la soumission de preuve, partagé entre le flux authentifié
+   * (`soumettrePreuve`, rôle PROVIDER) et le flux externe sans compte
+   * (`soumettrePreuveViaLien`) — seule l'autorisation en amont diffère, la
+   * validation et l'écriture sont strictement identiques.
+   */
+  private async createProofRecord(
+    installation: { id: string; status: string },
+    dto: SoumettrePreuveDto,
+    historyComment: string,
+  ) {
     this.validateCoordinates(dto.latitude, dto.longitude);
 
     const takenAt = new Date(dto.takenAt);
@@ -151,7 +179,7 @@ export class PrestationsService {
     }
 
     const existingProof = await this.prisma.publicationProof.findUnique({
-      where: { installationId },
+      where: { installationId: installation.id },
     });
     if (existingProof) {
       throw new ConflictException(
@@ -159,7 +187,7 @@ export class PrestationsService {
       );
     }
 
-    const result = await this.prisma.$transaction(async (tx) => {
+    return this.prisma.$transaction(async (tx) => {
       const proof = await tx.publicationProof.create({
         data: {
           photo: dto.photo,
@@ -175,7 +203,7 @@ export class PrestationsService {
       const newStatus = 'INSTALLED';
       if (previousStatus !== newStatus) {
         await tx.installation.update({
-          where: { id: installationId },
+          where: { id: installation.id },
           data: { status: newStatus },
         });
         await tx.statusHistory.create({
@@ -183,7 +211,7 @@ export class PrestationsService {
             previousStatus,
             newStatus,
             changedAt: new Date(),
-            comment: `Proof submitted by ${user.email}`,
+            comment: historyComment,
             installationId: installation.id,
           },
         });
@@ -191,8 +219,6 @@ export class PrestationsService {
 
       return proof;
     });
-
-    return result;
   }
 
   async updateStatus(
@@ -301,65 +327,121 @@ export class PrestationsService {
       );
     }
 
-    // Generate token
-    // CORRECTIF AUDIT (majeur) : le lien était documenté comme "single-use"
-    // sans que rien ne l'impose réellement (pas de `jti`, pas de trace
-    // d'usage). On génère désormais un identifiant unique (`jti`) et on
-    // l'enregistre dans Redis avec le même TTL que le token, à l'état
-    // "unused". `consumeValidationLink()` ne l'accepte qu'une seule fois.
-    const jti = randomUUID();
-    const payload: ValidationTokenPayload = {
-      sub: installationId,
-      type: 'validation',
-      jti,
-    };
-    const expiresIn =
-      this.configService.get<string>('jwt.validationExpiration') ?? '7d';
-    const token = this.jwtService.sign(payload);
-
-    // Calculate expiration date
-    const seconds = parseDuration(expiresIn);
-    const expiresAt = new Date(Date.now() + seconds * 1000);
-
-    await this.redisService.set(
-      `${VALIDATION_LINK_REDIS_PREFIX}${jti}`,
-      'unused',
-      seconds,
+    const { token, expiresAt } = await this.signSingleUseLink(
+      installationId,
+      'validation',
+      VALIDATION_LINK_REDIS_PREFIX,
     );
-
-    // Build link
     const baseUrl = this.configService.get<string>('VALIDATION_BASE_URL');
     if (!baseUrl) {
       throw new InternalServerErrorException(
         'Validation base URL not configured.',
       );
     }
-    const link = `${baseUrl}/${token}`;
 
     return new ValidationLinkResponseDto({
-      link,
+      link: `${baseUrl}/${token}`,
       token,
       expiresAt: expiresAt.toISOString(),
     });
   }
 
   /**
-   * Décode et valide la structure du token de lien de validation (signature,
-   * expiration, claims attendus). Commun aux deux endpoints publics
-   * (consultation et consommation, BACK-308) — ne dit rien de l'état
+   * `POST /prestations/:id/lien-preuve` — génère le lien à usage unique
+   * envoyé au prestataire externe (sans compte Liyanza) pour qu'il soumette
+   * lui-même sa preuve. Contrairement à `generateValidationLink`, ne
+   * suppose PAS qu'une preuve existe déjà — c'est justement ce lien qui va
+   * permettre d'en créer une.
+   */
+  async generateProofLink(installationId: string, user: AuthenticatedUser) {
+    const installation = await this.prisma.installation.findUnique({
+      where: { id: installationId },
+      include: { campaign: { include: { launchedBy: true } } },
+    });
+    if (!installation) {
+      throw new NotFoundException('Installation not found.');
+    }
+    assertSameCompany(
+      user,
+      installation.campaign.launchedBy.companyId,
+      'Installation',
+    );
+
+    const { token, expiresAt } = await this.signSingleUseLink(
+      installationId,
+      'proof',
+      PROOF_LINK_REDIS_PREFIX,
+    );
+    const baseUrl = this.configService.get<string>('PROOF_SUBMISSION_BASE_URL');
+    if (!baseUrl) {
+      throw new InternalServerErrorException(
+        'Proof submission base URL not configured.',
+      );
+    }
+
+    return new ProofLinkResponseDto({
+      link: `${baseUrl}/${token}`,
+      token,
+      expiresAt: expiresAt.toISOString(),
+    });
+  }
+
+  /**
+   * Signe un token à usage unique (JWT + `jti` suivi dans Redis) pour un
+   * lien externe sans compte — factorisé entre les liens de validation
+   * (BACK-308) et de preuve : même mécanisme de sécurité, seul le `type`
+   * embarqué et le préfixe Redis diffèrent.
+   *
+   * CORRECTIF AUDIT (majeur, hérité) : le lien était documenté comme
+   * "single-use" sans que rien ne l'impose réellement (pas de `jti`, pas de
+   * trace d'usage). Un identifiant unique est enregistré dans Redis avec le
+   * même TTL que le token, à l'état "unused" — la consommation ne l'accepte
+   * qu'une seule fois (`GETDEL` atomique, voir plus bas).
+   */
+  private async signSingleUseLink(
+    installationId: string,
+    type: LinkTokenType,
+    redisPrefix: string,
+  ): Promise<{ token: string; expiresAt: Date }> {
+    const jti = randomUUID();
+    const payload: ValidationTokenPayload = {
+      sub: installationId,
+      type,
+      jti,
+    };
+    const expiresIn =
+      this.configService.get<string>('jwt.validationExpiration') ?? '7d';
+    const token = this.jwtService.sign(payload);
+
+    const seconds = parseDuration(expiresIn);
+    const expiresAt = new Date(Date.now() + seconds * 1000);
+
+    await this.redisService.set(`${redisPrefix}${jti}`, 'unused', seconds);
+
+    return { token, expiresAt };
+  }
+
+  /**
+   * Décode et valide la structure d'un token de lien externe (signature,
+   * expiration, claims attendus, et le `type` attendu pour cet endpoint —
+   * un lien de validation ne doit jamais être accepté là où un lien de
+   * preuve est attendu, et inversement). Ne dit rien de l'état
    * "unused"/consommé du `jti`, qui reste vérifié séparément (Redis) car
    * seule la consommation doit y toucher.
    */
-  private verifyValidationToken(token: string): ValidationTokenPayload {
+  private verifyLinkToken(
+    token: string,
+    expectedType: LinkTokenType,
+  ): ValidationTokenPayload {
     let payload: ValidationTokenPayload;
     try {
       payload = this.jwtService.verify<ValidationTokenPayload>(token);
     } catch {
-      throw new UnauthorizedException('Lien de validation invalide ou expiré.');
+      throw new UnauthorizedException('Lien invalide ou expiré.');
     }
 
-    if (payload.type !== 'validation' || !payload.jti || !payload.sub) {
-      throw new UnauthorizedException('Lien de validation invalide.');
+    if (payload.type !== expectedType || !payload.jti || !payload.sub) {
+      throw new UnauthorizedException('Lien invalide.');
     }
 
     return payload;
@@ -377,7 +459,7 @@ export class PrestationsService {
   async consulterLienValidation(
     token: string,
   ): Promise<ValidationConsultationResponseDto> {
-    const payload = this.verifyValidationToken(token);
+    const payload = this.verifyLinkToken(token, 'validation');
 
     const installation = await this.prisma.installation.findUnique({
       where: { id: payload.sub },
@@ -389,6 +471,13 @@ export class PrestationsService {
       );
     }
 
+    const distanceMeters = haversineDistanceMeters(
+      installation.plannedLatitude,
+      installation.plannedLongitude,
+      installation.proof.latitude,
+      installation.proof.longitude,
+    );
+
     return new ValidationConsultationResponseDto({
       location: installation.location,
       photo: installation.proof.photo,
@@ -397,6 +486,8 @@ export class PrestationsService {
       takenAt: installation.proof.takenAt.toISOString(),
       validationStatus: installation.proof.validationStatus,
       validationComment: installation.proof.validationComment,
+      distanceMeters,
+      locationMatch: isLocationMatch(distanceMeters),
     });
   }
 
@@ -414,7 +505,7 @@ export class PrestationsService {
    * course entre lecture et suppression.
    */
   async consumeValidationLink(token: string, commentaire?: string) {
-    const payload = this.verifyValidationToken(token);
+    const payload = this.verifyLinkToken(token, 'validation');
 
     // CORRECTIF (complément) : `get` suivi de `del` n'est PAS atomique — deux
     // requêtes concurrentes présentant le même lien pourraient toutes deux
@@ -445,6 +536,135 @@ export class PrestationsService {
         validationStatus: 'VALIDATED',
         validationComment: commentaire ?? null,
       },
+    });
+  }
+
+  /**
+   * `GET /prestations/lien-preuve/:token` (endpoint public, sans compte) —
+   * lecture seule, ne consomme jamais le `jti` : le prestataire doit pouvoir
+   * ouvrir le lien, lire ce qu'on attend de lui, avant de déclencher sa
+   * caméra.
+   */
+  async consulterLienPreuve(
+    token: string,
+  ): Promise<ProofLinkConsultationResponseDto> {
+    const payload = this.verifyLinkToken(token, 'proof');
+
+    const installation = await this.prisma.installation.findUnique({
+      where: { id: payload.sub },
+      include: { campaign: true, proof: true },
+    });
+    if (!installation) {
+      throw new NotFoundException('Installation introuvable.');
+    }
+
+    return new ProofLinkConsultationResponseDto({
+      location: installation.location,
+      campaignName: installation.campaign.name,
+      plannedInstallationDate:
+        installation.plannedInstallationDate.toISOString(),
+      alreadySubmitted: Boolean(installation.proof),
+    });
+  }
+
+  /**
+   * `POST /prestations/lien-preuve/:token` (endpoint public, sans compte) —
+   * consomme le lien (usage unique, même mécanisme `GETDEL` que
+   * `consumeValidationLink`) et crée la preuve. Renvoie l'écart de
+   * localisation calculé immédiatement : le prestataire (ou la personne qui
+   * l'accompagne) voit tout de suite si la pose semble au bon endroit,
+   * plutôt que de l'apprendre après coup depuis le dashboard entreprise.
+   */
+  async soumettrePreuveViaLien(token: string, dto: SoumettrePreuveDto) {
+    const payload = this.verifyLinkToken(token, 'proof');
+
+    const redisKey = `${PROOF_LINK_REDIS_PREFIX}${payload.jti}`;
+    const status = await this.redisService.getDel(redisKey);
+    if (status !== 'unused') {
+      throw new UnauthorizedException(
+        'Ce lien de preuve a déjà été utilisé ou est expiré.',
+      );
+    }
+
+    const installation = await this.prisma.installation.findUnique({
+      where: { id: payload.sub },
+    });
+    if (!installation) {
+      throw new NotFoundException('Installation introuvable.');
+    }
+
+    const proof = await this.createProofRecord(
+      installation,
+      dto,
+      'Proof submitted via external link (no account)',
+    );
+
+    const distanceMeters = haversineDistanceMeters(
+      installation.plannedLatitude,
+      installation.plannedLongitude,
+      proof.latitude,
+      proof.longitude,
+    );
+
+    return {
+      proofId: proof.id,
+      distanceMeters,
+      locationMatch: isLocationMatch(distanceMeters),
+    };
+  }
+
+  /**
+   * `GET /prestations` — toutes les installations de l'entreprise, avec leur
+   * preuve si elle existe, pour la carte de suivi terrain. L'écart de
+   * localisation est calculé à la volée (jamais persisté : il ne dépend que
+   * de deux paires de coordonnées déjà en base, aucune migration requise).
+   */
+  async listInstallations(user: AuthenticatedUser) {
+    if (!user.companyId) {
+      throw new ForbiddenException(
+        'You must belong to a company to view installations.',
+      );
+    }
+
+    const installations = await this.prisma.installation.findMany({
+      where: { campaign: { launchedBy: { companyId: user.companyId } } },
+      include: { campaign: true, proof: true },
+      orderBy: { plannedInstallationDate: 'desc' },
+    });
+
+    return installations.map((installation) => {
+      const distanceMeters = installation.proof
+        ? haversineDistanceMeters(
+            installation.plannedLatitude,
+            installation.plannedLongitude,
+            installation.proof.latitude,
+            installation.proof.longitude,
+          )
+        : null;
+
+      return {
+        id: installation.id,
+        location: installation.location,
+        campaignId: installation.campaignId,
+        campaignName: installation.campaign.name,
+        status: installation.status,
+        plannedLatitude: installation.plannedLatitude,
+        plannedLongitude: installation.plannedLongitude,
+        plannedInstallationDate:
+          installation.plannedInstallationDate.toISOString(),
+        proof: installation.proof
+          ? {
+              photo: installation.proof.photo,
+              latitude: installation.proof.latitude,
+              longitude: installation.proof.longitude,
+              takenAt: installation.proof.takenAt.toISOString(),
+              validationStatus: installation.proof.validationStatus,
+            }
+          : null,
+        distanceMeters,
+        locationMatch:
+          distanceMeters !== null ? isLocationMatch(distanceMeters) : null,
+      };
     });
   }
 }

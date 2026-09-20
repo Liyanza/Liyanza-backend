@@ -90,6 +90,19 @@ export class EnvironmentVariables {
   VALIDATION_BASE_URL!: string;
 
   /**
+   * Page du frontend `Liyanza` (Next.js) où un prestataire externe (poseur
+   * d'affiche, sans compte Liyanza) atterrit en ouvrant son lien de preuve
+   * à usage unique — distincte de `VALIDATION_BASE_URL`, qui sert un
+   * publicitaire externe RELISANT une preuve déjà soumise, pas la
+   * soumettant. Même mécanisme de sécurité (JWT signé avec
+   * `jwt.validationSecret`, `jti` à usage unique en Redis), simplement un
+   * autre `type` de payload et une autre page cible.
+   */
+  @IsDefined()
+  @IsUrl({ require_tld: false, protocols: ['http', 'https'] })
+  PROOF_SUBMISSION_BASE_URL!: string;
+
+  /**
    * URL publique de CETTE API (pas du frontend web), utilisée pour encoder
    * la cible réelle de `GET /qr/:code` dans l'image du QR code généré
    * (BACK-305) — contrairement à `VALIDATION_BASE_URL` qui pointe vers une

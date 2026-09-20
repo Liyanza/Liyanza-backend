@@ -25,6 +25,18 @@ export class ValidationConsultationResponseDto {
   })
   validationComment?: string | null;
 
+  @ApiProperty({
+    description:
+      'Distance in meters between the planned installation location and the submitted proof location (Haversine)',
+  })
+  distanceMeters!: number;
+
+  @ApiProperty({
+    description:
+      'Whether the proof location is within the acceptable tolerance of the planned location',
+  })
+  locationMatch!: boolean;
+
   constructor(partial: Partial<ValidationConsultationResponseDto>) {
     Object.assign(this, partial);
   }

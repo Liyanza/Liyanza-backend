@@ -28,6 +28,8 @@ import { Public } from '../auth/decorators/public.decorator';
 import { ValidationLinkResponseDto } from './dto/validation-link-response.dto';
 import { ValidationConsultationResponseDto } from './dto/validation-consultation-response.dto';
 import { ConsommerValidationDto } from './dto/consommer-validation.dto';
+import { ProofLinkResponseDto } from './dto/proof-link-response.dto';
+import { ProofLinkConsultationResponseDto } from './dto/proof-link-consultation-response.dto';
 
 interface AuthenticatedRequest extends ExpressRequest {
   user: AuthenticatedUser;
@@ -117,6 +119,27 @@ export class PrestationsController {
   }
 
   /**
+   * GET /prestations
+   * List every installation of the caller's company (with its proof, if
+   * any, and the computed distance to the planned location) — feeds the
+   * terrain tracking map.
+   * Allowed: ADMIN, MARKETING_MANAGER, COMMUNITY_MANAGER
+   */
+  @Get('prestations')
+  @Roles(Role.ADMIN, Role.MARKETING_MANAGER, Role.COMMUNITY_MANAGER)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: "List the company's installations for the terrain map",
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Installations with proof and distance',
+  })
+  async listInstallations(@Request() req: AuthenticatedRequest) {
+    return this.prestationsService.listInstallations(req.user);
+  }
+
+  /**
    * POST /prestations/:id/lien-validation
    * Generate an external validation link for an installation.
    * Allowed: ADMIN, MARKETING_MANAGER
@@ -195,5 +218,68 @@ export class PrestationsController {
       token,
       dto.commentaire,
     );
+  }
+
+  /**
+   * POST /prestations/:id/lien-preuve
+   * Generate a single-use, no-account link sent to the external
+   * prestataire (poster installer) so THEY can submit the proof
+   * themselves — distinct from `lien-validation`, which lets an external
+   * reviewer re-check a proof that already exists.
+   * Allowed: ADMIN, MARKETING_MANAGER
+   */
+  @Post('prestations/:id/lien-preuve')
+  @Roles(Role.ADMIN, Role.MARKETING_MANAGER)
+  @HttpCode(HttpStatus.CREATED)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Generate a no-account proof-submission link for an installation',
+  })
+  @ApiResponse({ status: 201, type: ProofLinkResponseDto })
+  async generateProofLink(
+    @Param('id') id: string,
+    @Request() req: AuthenticatedRequest,
+  ): Promise<ProofLinkResponseDto> {
+    return this.prestationsService.generateProofLink(id, req.user);
+  }
+
+  /**
+   * GET /prestations/lien-preuve/:token
+   * Public, read-only: what the prestataire sees before submitting
+   * anything (location, campaign, whether it's already done).
+   */
+  @Public()
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  @Get('prestations/lien-preuve/:token')
+  @ApiOperation({
+    summary: 'Consult a proof-submission link (read-only, does not consume it)',
+  })
+  @ApiResponse({ status: 200, type: ProofLinkConsultationResponseDto })
+  async consulterLienPreuve(
+    @Param('token') token: string,
+  ): Promise<ProofLinkConsultationResponseDto> {
+    return this.prestationsService.consulterLienPreuve(token);
+  }
+
+  /**
+   * POST /prestations/lien-preuve/:token
+   * Public: consumes the single-use link and creates the proof. No JWT,
+   * no user account — the token itself is the authorization, same
+   * security pattern as the validation link (signed + Redis-tracked jti).
+   */
+  @Public()
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Post('prestations/lien-preuve/:token')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary:
+      'Consume a (single-use) proof-submission link and create the proof',
+  })
+  @ApiResponse({ status: 201, description: 'Proof created' })
+  async soumettrePreuveViaLien(
+    @Param('token') token: string,
+    @Body() dto: SoumettrePreuveDto,
+  ) {
+    return this.prestationsService.soumettrePreuveViaLien(token, dto);
   }
 }

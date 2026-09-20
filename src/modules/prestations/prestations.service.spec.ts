@@ -16,8 +16,18 @@ import { CampaignStatus, Role } from '@prisma/client';
 
 type MockedPrisma = {
   campaign: { findFirst: jest.Mock };
-  installation: { findUnique: jest.Mock; create: jest.Mock };
-  publicationProof: { findUnique: jest.Mock; update: jest.Mock };
+  installation: {
+    findUnique: jest.Mock;
+    findMany: jest.Mock;
+    create: jest.Mock;
+    update: jest.Mock;
+  };
+  publicationProof: {
+    findUnique: jest.Mock;
+    update: jest.Mock;
+    create: jest.Mock;
+  };
+  statusHistory: { create: jest.Mock };
   user: { findFirst: jest.Mock };
   $transaction: jest.Mock;
 };
@@ -44,10 +54,28 @@ describe('PrestationsService', () => {
           provide: PrismaService,
           useValue: {
             campaign: { findFirst: jest.fn() },
-            installation: { findUnique: jest.fn(), create: jest.fn() },
-            publicationProof: { findUnique: jest.fn(), update: jest.fn() },
+            installation: {
+              findUnique: jest.fn(),
+              findMany: jest.fn(),
+              create: jest.fn(),
+              update: jest.fn(),
+            },
+            publicationProof: {
+              findUnique: jest.fn(),
+              update: jest.fn(),
+              create: jest.fn(),
+            },
+            statusHistory: { create: jest.fn() },
             user: { findFirst: jest.fn() },
-            $transaction: jest.fn((cb: (tx: unknown) => unknown) => cb({})),
+            $transaction: jest.fn((cb: (tx: unknown) => unknown) =>
+              cb({
+                publicationProof: {
+                  create: jest.fn().mockResolvedValue(undefined),
+                },
+                installation: { update: jest.fn() },
+                statusHistory: { create: jest.fn() },
+              }),
+            ),
           },
         },
         {
@@ -232,6 +260,8 @@ describe('PrestationsService', () => {
     const installationWithProof = {
       id: 'inst-1',
       location: 'Bepanda, Douala',
+      plannedLatitude: 4.05,
+      plannedLongitude: 9.7,
       proof: {
         photo: 'https://cdn.test/proof.jpg',
         latitude: 4.05,
@@ -276,6 +306,8 @@ describe('PrestationsService', () => {
         takenAt: '2026-09-01T10:00:00.000Z',
         validationStatus: 'PENDING',
         validationComment: null,
+        distanceMeters: 0,
+        locationMatch: true,
       });
     });
 
@@ -391,6 +423,217 @@ describe('PrestationsService', () => {
         }) as unknown,
       });
       expect(result.providerId).toBe('provider-1');
+    });
+  });
+
+  describe('generateProofLink', () => {
+    const installation = {
+      id: 'inst-1',
+      campaign: { launchedBy: { companyId: 'company-1' } },
+    };
+
+    it('should throw NotFoundException if installation belongs to another company', async () => {
+      prisma.installation.findUnique.mockResolvedValue({
+        ...installation,
+        campaign: { launchedBy: { companyId: 'other-company' } },
+      });
+      await expect(
+        service.generateProofLink('inst-1', adminUser),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    // Contrairement à generateValidationLink, aucune preuve préalable n'est
+    // exigée — c'est justement ce lien qui va permettre d'en créer une.
+    it('should sign a proof link even when no proof exists yet', async () => {
+      prisma.installation.findUnique.mockResolvedValue(installation);
+      configService.get.mockImplementation((key: string) => {
+        if (key === 'jwt.validationExpiration') return '7d';
+        if (key === 'PROOF_SUBMISSION_BASE_URL')
+          return 'https://app.test/preuve';
+        return undefined;
+      });
+      jwtService.sign.mockReturnValue('signed.proof.token');
+
+      const result = await service.generateProofLink('inst-1', adminUser);
+
+      expect(result.token).toBe('signed.proof.token');
+      expect(result.link).toBe('https://app.test/preuve/signed.proof.token');
+      expect(redisService.set).toHaveBeenCalledWith(
+        expect.stringContaining('proof-link:') as unknown,
+        'unused',
+        expect.any(Number) as unknown,
+      );
+    });
+  });
+
+  describe('consulterLienPreuve', () => {
+    const payload = { sub: 'inst-1', type: 'proof' as const, jti: 'jti-1' };
+    const installation = {
+      id: 'inst-1',
+      location: 'Bepanda, Douala',
+      campaign: { name: 'Campagne Rentrée' },
+      plannedInstallationDate: new Date('2026-10-01T00:00:00Z'),
+      proof: null,
+    };
+
+    it('should reject a validation-type token (wrong link used on the wrong page)', async () => {
+      jwtService.verify.mockReturnValue({ ...payload, type: 'validation' });
+      await expect(service.consulterLienPreuve('token')).rejects.toThrow(
+        UnauthorizedException,
+      );
+    });
+
+    it('should report alreadySubmitted=false when no proof exists yet', async () => {
+      jwtService.verify.mockReturnValue(payload);
+      prisma.installation.findUnique.mockResolvedValue(installation);
+
+      const result = await service.consulterLienPreuve('token');
+
+      expect(result.alreadySubmitted).toBe(false);
+      expect(result.campaignName).toBe('Campagne Rentrée');
+      expect(redisService.getDel).not.toHaveBeenCalled();
+    });
+
+    it('should report alreadySubmitted=true when a proof already exists', async () => {
+      jwtService.verify.mockReturnValue(payload);
+      prisma.installation.findUnique.mockResolvedValue({
+        ...installation,
+        proof: { id: 'proof-1' },
+      });
+
+      const result = await service.consulterLienPreuve('token');
+
+      expect(result.alreadySubmitted).toBe(true);
+    });
+  });
+
+  describe('soumettrePreuveViaLien', () => {
+    const payload = { sub: 'inst-1', type: 'proof' as const, jti: 'jti-1' };
+    const installation = {
+      id: 'inst-1',
+      status: 'PLANNED',
+      plannedLatitude: 4.05,
+      plannedLongitude: 9.7,
+    };
+    const dto = {
+      photo: 'https://cdn.test/proof.jpg',
+      latitude: 4.05,
+      longitude: 9.7,
+      takenAt: '2026-10-01T10:00:00Z',
+    };
+
+    it('should reject a replayed (already consumed) link', async () => {
+      jwtService.verify.mockReturnValue(payload);
+      redisService.getDel.mockResolvedValue(null);
+
+      await expect(
+        service.soumettrePreuveViaLien('token', dto),
+      ).rejects.toThrow(UnauthorizedException);
+      expect(prisma.installation.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('should reject a validation-type token', async () => {
+      jwtService.verify.mockReturnValue({ ...payload, type: 'validation' });
+      await expect(
+        service.soumettrePreuveViaLien('token', dto),
+      ).rejects.toThrow(UnauthorizedException);
+    });
+
+    it('should create the proof and report the GPS distance from the planned location', async () => {
+      jwtService.verify.mockReturnValue(payload);
+      redisService.getDel.mockResolvedValue('unused');
+      prisma.installation.findUnique.mockResolvedValue(installation);
+      prisma.publicationProof.findUnique.mockResolvedValue(null);
+      prisma.$transaction.mockImplementation((cb: (tx: unknown) => unknown) =>
+        cb({
+          publicationProof: {
+            create: jest.fn().mockResolvedValue({
+              id: 'proof-1',
+              latitude: dto.latitude,
+              longitude: dto.longitude,
+            }),
+          },
+          installation: { update: jest.fn() },
+          statusHistory: { create: jest.fn() },
+        }),
+      );
+
+      const result = await service.soumettrePreuveViaLien('token', dto);
+
+      // Coordonnées identiques à celles prévues : distance nulle, donc
+      // correspondance — vérifie que la comparaison Haversine est bien
+      // branchée sur les deux bonnes paires de coordonnées.
+      expect(result).toEqual({
+        proofId: 'proof-1',
+        distanceMeters: 0,
+        locationMatch: true,
+      });
+    });
+
+    it('should propagate ConflictException if a proof already exists for this installation', async () => {
+      jwtService.verify.mockReturnValue(payload);
+      redisService.getDel.mockResolvedValue('unused');
+      prisma.installation.findUnique.mockResolvedValue(installation);
+      prisma.publicationProof.findUnique.mockResolvedValue({ id: 'existing' });
+
+      await expect(
+        service.soumettrePreuveViaLien('token', dto),
+      ).rejects.toThrow('A proof has already been submitted');
+    });
+  });
+
+  describe('listInstallations', () => {
+    it('should throw ForbiddenException if the user has no company', async () => {
+      await expect(
+        service.listInstallations({ ...adminUser, companyId: null }),
+      ).rejects.toThrow(ForbiddenException);
+      expect(prisma.installation.findMany).not.toHaveBeenCalled();
+    });
+
+    it('should compute the GPS distance and match flag for installations with a proof, and null for those without', async () => {
+      prisma.installation.findMany.mockResolvedValue([
+        {
+          id: 'inst-1',
+          location: 'Bepanda, Douala',
+          campaignId: 'camp-1',
+          campaign: { name: 'Campagne A' },
+          status: 'INSTALLED',
+          plannedLatitude: 4.05,
+          plannedLongitude: 9.7,
+          plannedInstallationDate: new Date('2026-10-01T00:00:00Z'),
+          proof: {
+            photo: 'https://cdn.test/a.jpg',
+            latitude: 4.05,
+            longitude: 9.7,
+            takenAt: new Date('2026-10-02T00:00:00Z'),
+            validationStatus: 'PENDING',
+          },
+        },
+        {
+          id: 'inst-2',
+          location: 'Akwa, Douala',
+          campaignId: 'camp-1',
+          campaign: { name: 'Campagne A' },
+          status: 'PLANNED',
+          plannedLatitude: 4.05,
+          plannedLongitude: 9.7,
+          plannedInstallationDate: new Date('2026-10-01T00:00:00Z'),
+          proof: null,
+        },
+      ]);
+
+      const result = await service.listInstallations(adminUser);
+
+      expect(result).toHaveLength(2);
+      expect(result[0].distanceMeters).toBe(0);
+      expect(result[0].locationMatch).toBe(true);
+      expect(result[1].distanceMeters).toBeNull();
+      expect(result[1].locationMatch).toBeNull();
+      expect(prisma.installation.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { campaign: { launchedBy: { companyId: 'company-1' } } },
+        }) as unknown,
+      );
     });
   });
 });
