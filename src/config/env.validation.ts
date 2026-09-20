@@ -142,6 +142,32 @@ export class EnvironmentVariables {
   SMTP_FROM!: string;
 
   /**
+   * Sélection du transport d'envoi d'email (`MailModule`). `smtp` (défaut,
+   * compatible Mailpit local) ou `brevo_api` — bascule nécessaire en
+   * production Render : constaté en conditions réelles que Render bloque
+   * (`Connection timeout`, 3/3 tentatives BullMQ) les connexions sortantes
+   * vers le port SMTP 587, alors que les mêmes identifiants Brevo
+   * fonctionnent sans problème en SMTP direct depuis un réseau non
+   * contraint. L'API HTTP transactionnelle de Brevo (HTTPS/443) contourne
+   * ce blocage réseau propre à la plateforme d'hébergement.
+   */
+  @IsOptional()
+  @IsIn(['smtp', 'brevo_api'])
+  EMAIL_PROVIDER?: string;
+
+  /**
+   * Clé API Brevo v3 (`Settings > SMTP & API > API Keys`, préfixe
+   * `xkeysib-`) — DISTINCTE de la clé SMTP (`xsmtpsib-...`) utilisée par
+   * `SmtpEmailProvider` : l'API REST `api.brevo.com` rejette l'authentification
+   * SMTP. Requise seulement quand `EMAIL_PROVIDER=brevo_api`, mais toujours
+   * définie (chaîne vide acceptée sinon) — même convention que
+   * `SMTP_USER`/`SMTP_PASSWORD` ci-dessus.
+   */
+  @IsDefined()
+  @IsString()
+  BREVO_API_KEY!: string;
+
+  /**
    * Stockage médias S3-compatible (BACK-307). Générique par conception
    * (`S3MediaStorageProvider` parle le protocole S3, pas une API propriétaire
    * AWS) : fonctionne à l'identique avec AWS S3, Cloudflare R2, Backblaze B2
