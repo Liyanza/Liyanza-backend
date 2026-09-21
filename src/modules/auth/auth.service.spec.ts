@@ -12,6 +12,7 @@ import { EMAIL_PROVIDER_TOKEN } from '../mail/interfaces/email-provider.interfac
 import {
   GOOGLE_OAUTH_CLIENT_TOKEN,
   FACEBOOK_OAUTH_CLIENT_TOKEN,
+  GOOGLE_ID_TOKEN_VERIFIER_TOKEN,
 } from './clients/oauth-login-client.interface';
 
 type MockedPrisma = {
@@ -37,6 +38,7 @@ describe('AuthService', () => {
     getAuthorizationUrl: jest.Mock;
     exchangeCodeForProfile: jest.Mock;
   };
+  let googleIdTokenVerifier: { verifyIdToken: jest.Mock };
   let configService: { get: jest.Mock; getOrThrow: jest.Mock };
 
   beforeEach(async () => {
@@ -97,6 +99,10 @@ describe('AuthService', () => {
             exchangeCodeForProfile: jest.fn(),
           },
         },
+        {
+          provide: GOOGLE_ID_TOKEN_VERIFIER_TOKEN,
+          useValue: { verifyIdToken: jest.fn() },
+        },
       ],
     }).compile();
 
@@ -107,6 +113,7 @@ describe('AuthService', () => {
     emailProvider = module.get(EMAIL_PROVIDER_TOKEN);
     googleClient = module.get(GOOGLE_OAUTH_CLIENT_TOKEN);
     facebookClient = module.get(FACEBOOK_OAUTH_CLIENT_TOKEN);
+    googleIdTokenVerifier = module.get(GOOGLE_ID_TOKEN_VERIFIER_TOKEN);
     configService = module.get(ConfigService);
     configService.getOrThrow.mockImplementation(
       (key: string) => `config:${key}`,
@@ -731,6 +738,128 @@ describe('AuthService', () => {
       });
 
       expect(result.redirectUrl).toContain('reason=account_disabled');
+      expect(jwtService.sign).not.toHaveBeenCalled();
+    });
+  });
+
+  // BACK-507 — Connexion Google depuis l'app mobile (idToken natif). DISTINCT
+  // de `handleOAuthLoginCallback` : pas de `state`, pas de redirection, pas
+  // de code d'échange — la paire de tokens est retournée directement, comme
+  // `login()`.
+  describe('loginWithGoogleIdToken', () => {
+    it('should reject with 401 (never leaking the underlying reason) when the idToken fails verification', async () => {
+      googleIdTokenVerifier.verifyIdToken.mockRejectedValue(
+        new Error('Invalid Google idToken.'),
+      );
+
+      await expect(
+        service.loginWithGoogleIdToken({ idToken: 'bad-token' }),
+      ).rejects.toThrow(UnauthorizedException);
+      expect(prisma.user.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('should create a new COMMUNITY_MANAGER user with no company on first login and return tokens directly (no exchange code)', async () => {
+      googleIdTokenVerifier.verifyIdToken.mockResolvedValue({
+        providerId: 'google-sub-mobile-1',
+        email: 'mobile-new@test.com',
+        firstName: 'Mobile',
+        lastName: 'User',
+      });
+      prisma.user.findUnique.mockResolvedValue(null); // ni par googleId, ni par email
+      prisma.user.create.mockResolvedValue({
+        id: 'u-mobile-new',
+        email: 'mobile-new@test.com',
+        firstName: 'Mobile',
+        lastName: 'User',
+        role: Role.COMMUNITY_MANAGER,
+        companyId: null,
+        deactivatedAt: null,
+      });
+      jwtService.sign.mockReturnValueOnce('access-token');
+      jwtService.sign.mockReturnValueOnce('refresh-token');
+
+      const result = await service.loginWithGoogleIdToken({
+        idToken: 'good-token',
+      });
+
+      expect(prisma.user.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          role: Role.COMMUNITY_MANAGER,
+          companyId: null,
+          password: null,
+          googleId: 'google-sub-mobile-1',
+        }) as unknown,
+      });
+      expect(result).toEqual({
+        accessToken: 'access-token',
+        refreshToken: 'refresh-token',
+        user: {
+          id: 'u-mobile-new',
+          email: 'mobile-new@test.com',
+          firstName: 'Mobile',
+          lastName: 'User',
+          role: Role.COMMUNITY_MANAGER,
+        },
+      });
+      // Contrairement au flow navigateur : aucun code d'échange à usage
+      // unique, les tokens sont retournés dans la réponse JSON directement.
+      expect(redisService.set).not.toHaveBeenCalledWith(
+        expect.stringMatching(/^oauth-exchange:/) as unknown,
+        expect.anything(),
+        expect.anything(),
+      );
+    });
+
+    // Même personne inscrite par email/mot de passe côté web, qui se connecte
+    // ensuite via Google sur mobile : doit être RATTACHÉE, jamais dupliquée.
+    it('should link an existing email/password account instead of creating a duplicate', async () => {
+      googleIdTokenVerifier.verifyIdToken.mockResolvedValue({
+        providerId: 'google-sub-mobile-2',
+        email: 'existing@test.com',
+        firstName: 'Existing',
+        lastName: 'User',
+      });
+      prisma.user.findUnique
+        .mockResolvedValueOnce(null) // pas encore lié par googleId
+        .mockResolvedValueOnce({
+          id: 'u-existing',
+          email: 'existing@test.com',
+          role: Role.COMMUNITY_MANAGER,
+          deactivatedAt: null,
+        });
+      prisma.user.update.mockResolvedValue({
+        id: 'u-existing',
+        email: 'existing@test.com',
+        role: Role.COMMUNITY_MANAGER,
+        deactivatedAt: null,
+      });
+      jwtService.sign.mockReturnValue('token');
+
+      await service.loginWithGoogleIdToken({ idToken: 'good-token' });
+
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { id: 'u-existing' },
+        data: { googleId: 'google-sub-mobile-2' },
+      });
+      expect(prisma.user.create).not.toHaveBeenCalled();
+    });
+
+    it('should reject a deactivated account without issuing any token', async () => {
+      googleIdTokenVerifier.verifyIdToken.mockResolvedValue({
+        providerId: 'google-sub-mobile-3',
+        email: 'disabled@test.com',
+        firstName: 'Disabled',
+        lastName: 'User',
+      });
+      prisma.user.findUnique.mockResolvedValueOnce({
+        id: 'u-disabled',
+        email: 'disabled@test.com',
+        deactivatedAt: new Date(),
+      });
+
+      await expect(
+        service.loginWithGoogleIdToken({ idToken: 'good-token' }),
+      ).rejects.toThrow(UnauthorizedException);
       expect(jwtService.sign).not.toHaveBeenCalled();
     });
   });

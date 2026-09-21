@@ -3,7 +3,9 @@ import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { firstValueFrom } from 'rxjs';
 import { AxiosError } from 'axios';
+import { OAuth2Client, TokenPayload } from 'google-auth-library';
 import {
+  GoogleIdTokenVerifier,
   OAuthLoginClient,
   OAuthUserProfile,
 } from './oauth-login-client.interface';
@@ -39,8 +41,12 @@ const GOOGLE_USERINFO_ENDPOINT =
  * conserver, donc pas de surface de tokens supplémentaire à sécuriser.
  */
 @Injectable()
-export class GoogleOAuthClient implements OAuthLoginClient {
+export class GoogleOAuthClient
+  implements OAuthLoginClient, GoogleIdTokenVerifier
+{
   private readonly logger = new Logger(GoogleOAuthClient.name);
+
+  private readonly idTokenClient = new OAuth2Client();
 
   constructor(
     private readonly http: HttpService,
@@ -87,6 +93,57 @@ export class GoogleOAuthClient implements OAuthLoginClient {
       email: userInfo.email,
       firstName: userInfo.given_name ?? userInfo.name ?? 'Utilisateur',
       lastName: userInfo.family_name ?? '',
+    };
+  }
+
+  /**
+   * BACK-507 — Connexion Google DEPUIS L'APP MOBILE (Flutter, `google_sign_in`).
+   * Vérifie la signature RS256 et l'expiration via les clés publiques Google
+   * (mise en cache/rotation gérées par `google-auth-library`, jamais par un
+   * appel réseau par login), PLUS l'audience (`aud`).
+   *
+   * L'audience attendue est le MÊME `GOOGLE_CLIENT_ID` "Application Web" que
+   * le flow navigateur ci-dessus — PAS un client id "Android"/"iOS" séparé.
+   * Ces derniers doivent bien exister côté Google Cloud Console (ils
+   * autorisent le sélecteur de compte natif à s'exécuter pour CET
+   * applicationId/bundle id précis, vérifié par Google via l'empreinte
+   * SHA-1/le bundle id), mais l'app Flutter leur demande explicitement
+   * d'émettre un idToken dont l'audience est le client "Application Web"
+   * (paramètre `serverClientId` de `google_sign_in`) : c'est la manière
+   * documentée par Google d'obtenir un idToken vérifiable par un serveur tiers
+   * — voir `docs/GUIDE_MOBILE_GOOGLE_SIGNIN.md`. Sans ce contrôle d'audience,
+   * n'importe quel idToken Google valide (émis pour une AUTRE app) serait
+   * accepté ici.
+   */
+  async verifyIdToken(idToken: string): Promise<OAuthUserProfile> {
+    let payload: TokenPayload | undefined;
+    try {
+      const ticket = await this.idTokenClient.verifyIdToken({
+        idToken,
+        audience: this.configService.getOrThrow<string>('GOOGLE_CLIENT_ID'),
+      });
+      payload = ticket.getPayload();
+    } catch (error) {
+      this.logger.warn(
+        `Google mobile idToken verification failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      throw new Error('Invalid Google idToken.');
+    }
+
+    if (!payload?.email) {
+      throw new Error('Google account has no email associated.');
+    }
+    if (payload.email_verified === false) {
+      throw new Error('Google account email is not verified.');
+    }
+
+    return {
+      providerId: payload.sub,
+      email: payload.email,
+      firstName: payload.given_name ?? payload.name ?? 'Utilisateur',
+      lastName: payload.family_name ?? '',
     };
   }
 

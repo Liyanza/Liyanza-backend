@@ -11,6 +11,7 @@ import { EMAIL_PROVIDER_TOKEN } from '../mail/interfaces/email-provider.interfac
 import {
   GOOGLE_OAUTH_CLIENT_TOKEN,
   FACEBOOK_OAUTH_CLIENT_TOKEN,
+  GOOGLE_ID_TOKEN_VERIFIER_TOKEN,
 } from './clients/oauth-login-client.interface';
 
 // `bcrypt` est un module natif : ses exports ne sont pas redéfinissables, donc
@@ -90,6 +91,10 @@ describe('AuthService — résistance à l’énumération de comptes', () => {
             getAuthorizationUrl: jest.fn(),
             exchangeCodeForProfile: jest.fn(),
           },
+        },
+        {
+          provide: GOOGLE_ID_TOKEN_VERIFIER_TOKEN,
+          useValue: { verifyIdToken: jest.fn() },
         },
       ],
     }).compile();

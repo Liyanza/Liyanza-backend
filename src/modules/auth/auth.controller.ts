@@ -26,6 +26,7 @@ import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { OAuthLoginCallbackQueryDto } from './dto/oauth-login-callback-query.dto';
 import { OAuthExchangeDto } from './dto/oauth-exchange.dto';
+import { GoogleMobileLoginDto } from './dto/google-mobile-login.dto';
 import { Public } from './decorators/public.decorator';
 import { Roles } from './decorators/roles.decorator';
 import { AuthenticatedUser } from './interfaces/authenticated-user.interface';
@@ -159,6 +160,28 @@ export class AuthController {
       query,
     );
     return { url: redirectUrl, statusCode: HttpStatus.FOUND };
+  }
+
+  // ------------------------------------------------------------------
+  // BACK-507 — Connexion Google DEPUIS L'APP MOBILE (Flutter, SDK natif
+  // `google_sign_in`). DISTINCT du flow `GET /auth/google` ci-dessus (conçu
+  // pour un navigateur web, redirection + code d'échange) : ici l'app a déjà
+  // résolu l'identité nativement et n'envoie qu'un `idToken` à vérifier — un
+  // seul aller-retour, pas de redirection.
+  // ------------------------------------------------------------------
+  @Public()
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Post('google/mobile')
+  @ApiOperation({
+    summary: 'Log in from the mobile app using a native Google Sign-In idToken',
+  })
+  @ApiResponse({ status: 201, description: 'Authenticated' })
+  @ApiResponse({
+    status: 401,
+    description: 'Invalid or expired Google idToken',
+  })
+  async googleMobileLogin(@Body() dto: GoogleMobileLoginDto) {
+    return this.authService.loginWithGoogleIdToken(dto);
   }
 
   @Public()

@@ -1,9 +1,19 @@
+/* eslint-disable @typescript-eslint/unbound-method */
 import { Test, TestingModule } from '@nestjs/testing';
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { of, throwError } from 'rxjs';
 import { AxiosError, type AxiosResponse } from 'axios';
+import { OAuth2Client } from 'google-auth-library';
 import { GoogleOAuthClient } from './google-oauth.client';
+
+// CORRECTIF TEST : `google-auth-library` fait un vrai appel réseau (fetch des
+// clés publiques JWKS Google) à l'intérieur de `OAuth2Client.verifyIdToken`.
+// On mocke la classe entière plutôt que de mocker un client HTTP bas niveau
+// utilisé en interne par la lib (voir `.claude/skills/liyanza-testing/SKILL.md`
+// — ici la lib EST le client externe à mocker, comme `HttpService` ci-dessous
+// pour le flow navigateur).
+jest.mock('google-auth-library');
 
 function axiosResponse<T>(data: T): AxiosResponse<T> {
   return {
@@ -133,6 +143,68 @@ describe('GoogleOAuthClient', () => {
       await expect(
         client.exchangeCodeForProfile('bad-code', 'https://cb'),
       ).rejects.toThrow(/invalid_grant/);
+    });
+  });
+
+  // BACK-507 — Connexion Google depuis l'app mobile (idToken natif), DISTINCT
+  // du flow ci-dessus (code + redirect_uri).
+  describe('verifyIdToken', () => {
+    const mockVerifyIdToken = OAuth2Client.prototype.verifyIdToken as jest.Mock;
+
+    beforeEach(() => {
+      mockVerifyIdToken.mockReset();
+    });
+
+    it('should verify the token against the web GOOGLE_CLIENT_ID (the serverClientId configured on the app) and map the payload', async () => {
+      configService.getOrThrow.mockImplementation((key: string) =>
+        key === 'GOOGLE_CLIENT_ID' ? 'web-client-id' : `config:${key}`,
+      );
+      mockVerifyIdToken.mockResolvedValue({
+        getPayload: () => ({
+          sub: 'google-sub-9',
+          email: 'mobile-user@gmail.com',
+          email_verified: true,
+          given_name: 'Grace',
+          family_name: 'Hopper',
+        }),
+      });
+
+      const profile = await client.verifyIdToken('id-token-value');
+
+      expect(mockVerifyIdToken).toHaveBeenCalledWith({
+        idToken: 'id-token-value',
+        audience: 'web-client-id',
+      });
+      expect(profile).toEqual({
+        providerId: 'google-sub-9',
+        email: 'mobile-user@gmail.com',
+        firstName: 'Grace',
+        lastName: 'Hopper',
+      });
+    });
+
+    it('should wrap a signature/audience verification failure into a generic error', async () => {
+      mockVerifyIdToken.mockRejectedValue(
+        new Error('Wrong number of segments'),
+      );
+
+      await expect(client.verifyIdToken('bad-token')).rejects.toThrow(
+        'Invalid Google idToken.',
+      );
+    });
+
+    it('should reject an account whose Google email is not verified', async () => {
+      mockVerifyIdToken.mockResolvedValue({
+        getPayload: () => ({
+          sub: 'google-sub-10',
+          email: 'unverified@gmail.com',
+          email_verified: false,
+        }),
+      });
+
+      await expect(client.verifyIdToken('id-token-value')).rejects.toThrow(
+        'Google account email is not verified.',
+      );
     });
   });
 });

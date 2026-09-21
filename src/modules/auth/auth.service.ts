@@ -15,6 +15,7 @@ import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { OAuthLoginCallbackQueryDto } from './dto/oauth-login-callback-query.dto';
 import { OAuthExchangeDto } from './dto/oauth-exchange.dto';
+import { GoogleMobileLoginDto } from './dto/google-mobile-login.dto';
 import * as bcrypt from 'bcrypt';
 import { Prisma, Role, User } from '@prisma/client';
 import { ConfigService } from '@nestjs/config';
@@ -26,10 +27,12 @@ import type { EmailProvider } from '../mail/interfaces/email-provider.interface'
 import {
   GOOGLE_OAUTH_CLIENT_TOKEN,
   FACEBOOK_OAUTH_CLIENT_TOKEN,
+  GOOGLE_ID_TOKEN_VERIFIER_TOKEN,
 } from './clients/oauth-login-client.interface';
 import type {
   OAuthLoginClient,
   OAuthUserProfile,
+  GoogleIdTokenVerifier,
 } from './clients/oauth-login-client.interface';
 
 type OAuthProvider = 'google' | 'facebook';
@@ -75,6 +78,8 @@ export class AuthService {
     @Inject(GOOGLE_OAUTH_CLIENT_TOKEN) private googleClient: OAuthLoginClient,
     @Inject(FACEBOOK_OAUTH_CLIENT_TOKEN)
     private facebookClient: OAuthLoginClient,
+    @Inject(GOOGLE_ID_TOKEN_VERIFIER_TOKEN)
+    private googleIdTokenVerifier: GoogleIdTokenVerifier,
   ) {}
 
   // ------------------------------------------------------------------
@@ -524,6 +529,49 @@ export class AuthService {
         lastName: string;
         role: Role;
       };
+    };
+  }
+
+  /**
+   * BACK-507 — Connexion Google DEPUIS L'APP MOBILE (Flutter, `google_sign_in`).
+   * Contrairement à `handleOAuthLoginCallback` ci-dessus, l'app a déjà résolu
+   * l'identité de l'utilisateur nativement : pas de `state`, pas de
+   * redirection, pas de code d'échange à courte durée de vie — un seul
+   * aller-retour qui renvoie directement la paire de tokens, exactement comme
+   * `login()`.
+   */
+  async loginWithGoogleIdToken(dto: GoogleMobileLoginDto) {
+    let profile: OAuthUserProfile;
+    try {
+      profile = await this.googleIdTokenVerifier.verifyIdToken(dto.idToken);
+    } catch (error) {
+      this.logger.warn(
+        `Google mobile login rejected: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      throw new UnauthorizedException('Invalid Google idToken.');
+    }
+
+    const user = await this.findOrCreateOAuthUser('google', profile);
+
+    if (user.deactivatedAt) {
+      throw new UnauthorizedException('Account disabled.');
+    }
+
+    const accessToken = this.signAccessToken(user);
+    const refreshToken = await this.issueRefreshToken(user);
+
+    return {
+      accessToken,
+      refreshToken,
+      user: {
+        id: user.id,
+        email: user.email,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        role: user.role,
+      },
     };
   }
 

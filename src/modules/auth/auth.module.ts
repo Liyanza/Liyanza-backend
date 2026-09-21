@@ -18,6 +18,7 @@ import { FacebookOAuthClient } from './clients/facebook-oauth.client';
 import {
   GOOGLE_OAUTH_CLIENT_TOKEN,
   FACEBOOK_OAUTH_CLIENT_TOKEN,
+  GOOGLE_ID_TOKEN_VERIFIER_TOKEN,
 } from './clients/oauth-login-client.interface';
 
 @Module({
@@ -54,6 +55,13 @@ import {
     CompanyScopeGuard,
     { provide: GOOGLE_OAUTH_CLIENT_TOKEN, useClass: GoogleOAuthClient },
     { provide: FACEBOOK_OAUTH_CLIENT_TOKEN, useClass: FacebookOAuthClient },
+    // Même instance que GOOGLE_OAUTH_CLIENT_TOKEN (GoogleOAuthClient implémente
+    // les deux interfaces) — `useExisting` plutôt qu'un second `useClass`,
+    // qui créerait une seconde instance inutile du même client HTTP.
+    {
+      provide: GOOGLE_ID_TOKEN_VERIFIER_TOKEN,
+      useExisting: GOOGLE_OAUTH_CLIENT_TOKEN,
+    },
   ],
   exports: [
     AuthService,

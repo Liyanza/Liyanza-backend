@@ -291,6 +291,16 @@ export class EnvironmentVariables {
    *
    * Google : app dédiée sur console.cloud.google.com (écran de consentement
    * OAuth + identifiants "ID client OAuth" de type "Application Web").
+   *
+   * BACK-507 — réutilisé TEL QUEL comme audience (`aud`) attendue du idToken
+   * de connexion Google DEPUIS L'APP MOBILE (`GoogleOAuthClient.verifyIdToken`) :
+   * l'app Flutter le fournit comme `serverClientId` de `google_sign_in`,
+   * c'est la manière documentée par Google d'obtenir un idToken vérifiable
+   * par un serveur tiers. Aucune variable dédiée "Android"/"iOS" ici — ces
+   * client id existent bien côté Google Cloud Console (nécessaires pour
+   * autoriser le sélecteur de compte natif pour cet applicationId/bundle id),
+   * mais ne sont jamais lus par ce backend. Voir
+   * `docs/GUIDE_MOBILE_GOOGLE_SIGNIN.md`.
    */
   @IsDefined()
   @IsString()
