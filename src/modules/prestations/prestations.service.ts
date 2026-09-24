@@ -15,6 +15,7 @@ import { assertSameCompany } from '../auth/utils/company-scope.util';
 import { CreatePrestationDto } from './dto/create-prestation.dto';
 import { SoumettrePreuveDto } from './dto/soumettre-preuve.dto';
 import { UpdateStatusDto } from './dto/update-status.dto';
+import { ReviewProofDto } from './dto/review-proof.dto';
 import { ValidationLinkResponseDto } from './dto/validation-link-response.dto';
 import { ValidationConsultationResponseDto } from './dto/validation-consultation-response.dto';
 import { ProofLinkResponseDto } from './dto/proof-link-response.dto';
@@ -181,13 +182,20 @@ export class PrestationsService {
     const existingProof = await this.prisma.publicationProof.findUnique({
       where: { installationId: installation.id },
     });
-    if (existingProof) {
+    // Une preuve refusée par l'entreprise peut être remplacée par un nouvel
+    // envoi (le refus reste tracé dans StatusHistory) ; les autres non.
+    if (existingProof && existingProof.validationStatus !== 'REJECTED') {
       throw new ConflictException(
         'A proof has already been submitted for this installation.',
       );
     }
 
     return this.prisma.$transaction(async (tx) => {
+      if (existingProof) {
+        await tx.publicationProof.delete({
+          where: { installationId: installation.id },
+        });
+      }
       const proof = await tx.publicationProof.create({
         data: {
           photo: dto.photo,
@@ -274,6 +282,71 @@ export class PrestationsService {
     });
 
     return result;
+  }
+
+  /**
+   * `PATCH /prestations/:id/preuve/validation` — l'entreprise valide ou
+   * refuse la preuve reçue. Une preuve validée apparaît sur la carte aux
+   * coordonnées de la photo ; refusée, le prestataire peut en renvoyer une
+   * via un nouveau lien (voir `createProofRecord`).
+   */
+  async reviewProof(
+    installationId: string,
+    dto: ReviewProofDto,
+    user: AuthenticatedUser,
+  ) {
+    const installation = await this.prisma.installation.findUnique({
+      where: { id: installationId },
+      include: {
+        campaign: { include: { launchedBy: true } },
+        proof: true,
+      },
+    });
+    if (!installation) {
+      throw new NotFoundException('Installation not found.');
+    }
+
+    assertSameCompany(
+      user,
+      installation.campaign.launchedBy.companyId,
+      'Installation',
+    );
+
+    if (!installation.proof) {
+      throw new NotFoundException('No proof has been submitted yet.');
+    }
+    if (installation.proof.validationStatus !== 'PENDING') {
+      throw new ConflictException('This proof has already been reviewed.');
+    }
+
+    const comment = dto.comment?.trim() || null;
+
+    return this.prisma.$transaction(async (tx) => {
+      const proof = await tx.publicationProof.update({
+        where: { installationId },
+        data: { validationStatus: dto.decision, validationComment: comment },
+      });
+
+      if (installation.status !== dto.decision) {
+        await tx.installation.update({
+          where: { id: installationId },
+          data: { status: dto.decision },
+        });
+        await tx.statusHistory.create({
+          data: {
+            previousStatus: installation.status,
+            newStatus: dto.decision,
+            changedAt: new Date(),
+            comment:
+              comment ??
+              `Proof ${dto.decision === 'VALIDATED' ? 'validated' : 'rejected'} by ${user.email}`,
+            installationId,
+          },
+        });
+      }
+
+      return proof;
+    });
   }
 
   async getHistorique(installationId: string, user: AuthenticatedUser) {
@@ -563,7 +636,10 @@ export class PrestationsService {
       campaignName: installation.campaign.name,
       plannedInstallationDate:
         installation.plannedInstallationDate.toISOString(),
-      alreadySubmitted: Boolean(installation.proof),
+      // Une preuve refusée attend justement un nouvel envoi.
+      alreadySubmitted:
+        Boolean(installation.proof) &&
+        installation.proof?.validationStatus !== 'REJECTED',
     });
   }
 
@@ -659,6 +735,7 @@ export class PrestationsService {
               longitude: installation.proof.longitude,
               takenAt: installation.proof.takenAt.toISOString(),
               validationStatus: installation.proof.validationStatus,
+              validationComment: installation.proof.validationComment ?? null,
             }
           : null,
         distanceMeters,

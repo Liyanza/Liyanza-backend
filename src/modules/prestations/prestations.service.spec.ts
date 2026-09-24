@@ -2,6 +2,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   NotFoundException,
   UnauthorizedException,
@@ -579,6 +580,140 @@ describe('PrestationsService', () => {
       await expect(
         service.soumettrePreuveViaLien('token', dto),
       ).rejects.toThrow('A proof has already been submitted');
+    });
+
+    it('should replace a rejected proof with the new submission', async () => {
+      jwtService.verify.mockReturnValue(payload);
+      redisService.getDel.mockResolvedValue('unused');
+      prisma.installation.findUnique.mockResolvedValue(installation);
+      prisma.publicationProof.findUnique.mockResolvedValue({
+        id: 'old',
+        validationStatus: 'REJECTED',
+      });
+      const tx = {
+        publicationProof: {
+          delete: jest.fn(),
+          create: jest.fn().mockResolvedValue({
+            id: 'proof-2',
+            latitude: dto.latitude,
+            longitude: dto.longitude,
+          }),
+        },
+        installation: { update: jest.fn() },
+        statusHistory: { create: jest.fn() },
+      };
+      prisma.$transaction.mockImplementation((cb: (t: unknown) => unknown) =>
+        cb(tx),
+      );
+
+      const result = await service.soumettrePreuveViaLien('token', dto);
+
+      expect(tx.publicationProof.delete).toHaveBeenCalled();
+      expect(result.proofId).toBe('proof-2');
+    });
+  });
+
+  describe('reviewProof', () => {
+    const installationWithProof = (validationStatus: string) => ({
+      id: 'inst-1',
+      status: 'INSTALLED',
+      campaign: { launchedBy: { companyId: 'company-1' } },
+      proof: { validationStatus },
+    });
+
+    it('should validate a pending proof and record the status change', async () => {
+      prisma.installation.findUnique.mockResolvedValue(
+        installationWithProof('PENDING'),
+      );
+      const tx = {
+        publicationProof: {
+          update: jest
+            .fn()
+            .mockResolvedValue({ validationStatus: 'VALIDATED' }),
+        },
+        installation: { update: jest.fn() },
+        statusHistory: { create: jest.fn() },
+      };
+      prisma.$transaction.mockImplementation((cb: (t: unknown) => unknown) =>
+        cb(tx),
+      );
+
+      await service.reviewProof('inst-1', { decision: 'VALIDATED' }, adminUser);
+
+      expect(tx.publicationProof.update).toHaveBeenCalledWith({
+        where: { installationId: 'inst-1' },
+        data: { validationStatus: 'VALIDATED', validationComment: null },
+      });
+      expect(tx.installation.update).toHaveBeenCalledWith({
+        where: { id: 'inst-1' },
+        data: { status: 'VALIDATED' },
+      });
+      expect(tx.statusHistory.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            previousStatus: 'INSTALLED',
+            newStatus: 'VALIDATED',
+          }) as unknown,
+        }),
+      );
+    });
+
+    it('should store the rejection comment', async () => {
+      prisma.installation.findUnique.mockResolvedValue(
+        installationWithProof('PENDING'),
+      );
+      const tx = {
+        publicationProof: { update: jest.fn() },
+        installation: { update: jest.fn() },
+        statusHistory: { create: jest.fn() },
+      };
+      prisma.$transaction.mockImplementation((cb: (t: unknown) => unknown) =>
+        cb(tx),
+      );
+
+      await service.reviewProof(
+        'inst-1',
+        { decision: 'REJECTED', comment: ' Mauvais panneau ' },
+        adminUser,
+      );
+
+      expect(tx.publicationProof.update).toHaveBeenCalledWith({
+        where: { installationId: 'inst-1' },
+        data: {
+          validationStatus: 'REJECTED',
+          validationComment: 'Mauvais panneau',
+        },
+      });
+    });
+
+    it('should refuse a proof that was already reviewed', async () => {
+      prisma.installation.findUnique.mockResolvedValue(
+        installationWithProof('VALIDATED'),
+      );
+      await expect(
+        service.reviewProof('inst-1', { decision: 'REJECTED' }, adminUser),
+      ).rejects.toThrow(ConflictException);
+    });
+
+    it('should refuse when no proof was submitted', async () => {
+      prisma.installation.findUnique.mockResolvedValue({
+        ...installationWithProof('PENDING'),
+        proof: null,
+      });
+      await expect(
+        service.reviewProof('inst-1', { decision: 'VALIDATED' }, adminUser),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('should refuse an installation of another company', async () => {
+      prisma.installation.findUnique.mockResolvedValue({
+        ...installationWithProof('PENDING'),
+        campaign: { launchedBy: { companyId: 'company-2' } },
+      });
+      await expect(
+        service.reviewProof('inst-1', { decision: 'VALIDATED' }, adminUser),
+      ).rejects.toThrow();
+      expect(prisma.$transaction).not.toHaveBeenCalled();
     });
   });
 
