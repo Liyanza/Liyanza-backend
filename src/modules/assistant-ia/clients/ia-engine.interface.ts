@@ -1,9 +1,26 @@
 export const IA_ENGINE_TOKEN = 'IA_ENGINE_TOKEN';
 
+/**
+ * Contexte transmis au service chatbot (`kiyanza_assistant_ia`, modèle
+ * Pydantic `AskContext` de `chatbot_api.py`). Tout est facultatif, et
+ * appartient TOUJOURS à l'entreprise de l'utilisateur courant : l'isolation
+ * multi-tenant est garantie ici, jamais côté Python.
+ */
+export interface AskQuestionContext {
+  topic?: string;
+  companyProfile?: {
+    name: string;
+    businessSector: string;
+    address: string;
+  };
+  /** Fenêtre bornée, du plus ancien au plus récent (20 max côté Python). */
+  recentMessages?: Array<{ sender: 'USER' | 'AI'; content: string }>;
+}
+
 export interface AskQuestionParams {
   conversationId: string;
   userMessage: string;
-  context?: Record<string, any>;
+  context?: AskQuestionContext;
 }
 
 export interface AskQuestionResult {

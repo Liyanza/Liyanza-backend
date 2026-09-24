@@ -11,6 +11,7 @@ import {
   MinLength,
   NotEquals,
   IsOptional,
+  ValidateIf,
   validateSync,
 } from 'class-validator';
 
@@ -222,6 +223,32 @@ export class EnvironmentVariables {
   })
   @NotEquals('changeme')
   INTERNAL_MONITORING_TOKEN!: string;
+
+  /**
+   * URL du service chatbot `kiyanza_assistant_ia` (FastAPI, hébergé sur AWS
+   * EC2 derrière Caddy), sans slash final — ex:
+   * `https://13-37-1-2.sslip.io`. Facultative : absente, `AssistantIAModule`
+   * garde le moteur mock (dev local, CI). `@ValidateIf` plutôt que
+   * `@IsOptional()` : ce dernier ne saute que `null`/`undefined`, or
+   * `IA_SERVICE_URL=` laissé vide dans un `.env` donne une chaîne vide.
+   */
+  @ValidateIf((env: EnvironmentVariables) => !!env.IA_SERVICE_URL)
+  @IsUrl({ require_tld: false, protocols: ['http', 'https'] })
+  IA_SERVICE_URL?: string;
+
+  /**
+   * Secret partagé envoyé au service chatbot dans le header
+   * `X-Internal-Token` — IDENTIQUE à `INTERNAL_TOKEN` côté Python. Même
+   * rigueur que `INTERNAL_MONITORING_TOKEN` : il protège un quota LLM
+   * exposé sur Internet. Requis dès que `IA_SERVICE_URL` est défini.
+   */
+  @ValidateIf((env: EnvironmentVariables) => !!env.IA_SERVICE_URL)
+  @IsString()
+  @MinLength(32, {
+    message: 'IA_SERVICE_INTERNAL_TOKEN must be at least 32 characters long.',
+  })
+  @NotEquals('changeme')
+  IA_SERVICE_INTERNAL_TOKEN?: string;
 
   /**
    * Intégration Meta Graph API (BACK-502/503/504) — OAuth Facebook/Instagram
