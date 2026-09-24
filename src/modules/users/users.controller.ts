@@ -22,6 +22,8 @@ import { CreateSubAccountDto } from './dto/create-sub-account.dto';
 import { UpdateUserRoleDto } from './dto/update-user-role.dto';
 import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { Public } from '../auth/decorators/public.decorator';
+import { Throttle } from '@nestjs/throttler';
 
 interface AuthenticatedRequest extends ExpressRequest {
   user: AuthenticatedUser;
@@ -41,14 +43,37 @@ export class UsersController {
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
     summary:
-      "Invite a sub-account in the caller's company (temporary password emailed)",
+      "Invite a member in the caller's company: new accounts get a temporary password, existing accounts get an invitation link",
   })
-  @ApiResponse({ status: 201, description: 'Sub-account created' })
+  @ApiResponse({
+    status: 201,
+    description:
+      'Sub-account created (status CREATED) or invitation sent to an existing account (status INVITED)',
+  })
+  @ApiResponse({
+    status: 409,
+    description: 'Already a member, or member of another company',
+  })
   async createSubAccount(
     @Body() dto: CreateSubAccountDto,
     @Request() req: AuthenticatedRequest,
   ) {
     return this.usersService.createSubAccount(dto, req.user);
+  }
+
+  /**
+   * Accept a company invitation sent to an existing account (public: the
+   * emailed single-use link is the proof).
+   */
+  @Public()
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Post('invitations/:token/accept')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Accept a company invitation (single-use link)' })
+  @ApiResponse({ status: 200, description: 'Invitation accepted' })
+  @ApiResponse({ status: 400, description: 'Invalid or expired invitation' })
+  async acceptInvitation(@Param('token') token: string) {
+    return this.usersService.acceptInvitation(token);
   }
 
   /**

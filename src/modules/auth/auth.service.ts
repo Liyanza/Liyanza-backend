@@ -650,16 +650,18 @@ export class AuthService {
   /**
    * Ne révèle JAMAIS si l'email correspond à un compte existant (même
    * garde-fou que `login()` — énumération de comptes) : toujours `{success:
-   * true}`, un email n'est envoyé que si un compte actif ET disposant d'un
-   * mot de passe local correspond (un compte 100% Google/Facebook n'a rien à
-   * réinitialiser).
+   * true}`, un email est envoyé si un compte actif correspond. Un compte
+   * 100% Google/Facebook n'a pas de mot de passe local : il reçoit le même
+   * lien, présenté comme « créer un mot de passe » (resetPassword() se
+   * contente de poser le hash) — auparavant il ne recevait rien, et
+   * l'utilisateur attendait un email qui ne venait jamais.
    */
   async forgotPassword(dto: ForgotPasswordDto): Promise<{ success: true }> {
     const user = await this.prisma.user.findUnique({
       where: { email: dto.email },
     });
 
-    if (user && !user.deactivatedAt && user.password) {
+    if (user && !user.deactivatedAt) {
       const token = randomBytes(32).toString('base64url');
       await this.redisService.set(
         this.passwordResetKey(token),
@@ -678,8 +680,12 @@ export class AuthService {
       await this.emailProvider
         .send({
           to: user.email,
-          subject: 'Réinitialisation de votre mot de passe Liyanza',
-          text: `Bonjour ${user.firstName},\n\nVous avez demandé la réinitialisation de votre mot de passe Liyanza. Cliquez sur le lien suivant (valable 30 minutes) pour choisir un nouveau mot de passe :\n\n${resetUrl.toString()}\n\nSi vous n'êtes pas à l'origine de cette demande, ignorez cet email : votre mot de passe restera inchangé.`,
+          subject: user.password
+            ? 'Réinitialisation de votre mot de passe Liyanza'
+            : 'Créez un mot de passe pour votre compte Liyanza',
+          text: user.password
+            ? `Bonjour ${user.firstName},\n\nVous avez demandé la réinitialisation de votre mot de passe Liyanza. Cliquez sur le lien suivant (valable 30 minutes) pour choisir un nouveau mot de passe :\n\n${resetUrl.toString()}\n\nSi vous n'êtes pas à l'origine de cette demande, ignorez cet email : votre mot de passe restera inchangé.`
+            : `Bonjour ${user.firstName},\n\nVotre compte Liyanza a été créé avec Google ou Facebook et n'a pas encore de mot de passe. Vous pouvez toujours vous connecter avec ce service ; pour pouvoir aussi vous connecter avec votre email, cliquez sur le lien suivant (valable 30 minutes) et choisissez un mot de passe :\n\n${resetUrl.toString()}\n\nSi vous n'êtes pas à l'origine de cette demande, ignorez cet email.`,
         })
         .catch((error: unknown) => {
           this.logger.error(

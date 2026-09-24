@@ -22,6 +22,7 @@ import { PrestationsService } from './prestations.service';
 import { CreatePrestationDto } from './dto/create-prestation.dto';
 import { SoumettrePreuveDto } from './dto/soumettre-preuve.dto';
 import { UpdateStatusDto } from './dto/update-status.dto';
+import { ReviewProofDto } from './dto/review-proof.dto';
 import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { Public } from '../auth/decorators/public.decorator';
@@ -99,6 +100,27 @@ export class PrestationsController {
     @Request() req: AuthenticatedRequest,
   ) {
     return this.prestationsService.updateStatus(installationId, dto, req.user);
+  }
+
+  /**
+   * PATCH /prestations/:id/preuve/validation
+   * Validate or reject the proof received for an installation.
+   * Allowed: ADMIN, MARKETING_MANAGER
+   */
+  @Patch('prestations/:id/preuve/validation')
+  @Roles(Role.ADMIN, Role.MARKETING_MANAGER)
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Validate or reject an installation proof' })
+  @ApiResponse({ status: 200, description: 'Proof reviewed' })
+  @ApiResponse({ status: 404, description: 'Installation or proof not found' })
+  @ApiResponse({ status: 409, description: 'Proof already reviewed' })
+  async reviewProof(
+    @Param('id') installationId: string,
+    @Body() dto: ReviewProofDto,
+    @Request() req: AuthenticatedRequest,
+  ) {
+    return this.prestationsService.reviewProof(installationId, dto, req.user);
   }
 
   /**

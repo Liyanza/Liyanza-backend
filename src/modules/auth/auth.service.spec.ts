@@ -434,20 +434,36 @@ describe('AuthService', () => {
       expect(emailProvider.send).not.toHaveBeenCalled();
     });
 
-    // Un compte 100% Google/Facebook n'a pas de mot de passe local à
-    // réinitialiser — même comportement uniforme (toujours success) que les
-    // autres branches anti-énumération ci-dessus.
-    it('should return success without sending an email for an OAuth-only account (no local password)', async () => {
+    // Un compte 100% Google/Facebook n'a pas de mot de passe local : il
+    // reçoit un lien pour en créer un (auparavant : aucun email, et
+    // l'utilisateur attendait en vain).
+    it('should email a "create a password" link to an OAuth-only account (no local password)', async () => {
       prisma.user.findUnique.mockResolvedValue({
         id: 'u1',
         email: dto.email,
+        firstName: 'Jane',
         password: null,
         deactivatedAt: null,
       });
+      configService.getOrThrow.mockImplementation((key: string) =>
+        key === 'PASSWORD_RESET_URL'
+          ? 'https://app.liyanza.com/reset-password'
+          : `config:${key}`,
+      );
 
-      await service.forgotPassword(dto);
+      await expect(service.forgotPassword(dto)).resolves.toEqual({
+        success: true,
+      });
 
-      expect(emailProvider.send).not.toHaveBeenCalled();
+      expect(emailProvider.send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          to: dto.email,
+          subject: expect.stringContaining('Créez un mot de passe') as unknown,
+          text: expect.stringContaining(
+            'https://app.liyanza.com/reset-password?token=',
+          ) as unknown,
+        }),
+      );
     });
 
     it('should store a single-use token in Redis and email the reset link for an eligible account', async () => {
