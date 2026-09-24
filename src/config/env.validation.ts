@@ -355,6 +355,15 @@ export class EnvironmentVariables {
   @IsDefined()
   @IsUrl({ require_tld: false, protocols: ['http', 'https'] })
   PASSWORD_RESET_URL!: string;
+
+  /**
+   * Page du frontend qui accepte une invitation envoyée à un compte existant
+   * (`?token=...` ajouté). Facultative : par défaut `/invitation` sur le
+   * domaine de `PASSWORD_RESET_URL`.
+   */
+  @IsOptional()
+  @IsUrl({ require_tld: false, protocols: ['http', 'https'] })
+  INVITATION_URL?: string;
 }
 
 export function validate(config: Record<string, unknown>) {
