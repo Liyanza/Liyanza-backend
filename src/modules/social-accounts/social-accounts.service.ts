@@ -44,17 +44,21 @@ const SAFE_SELECT = {
 // de `state`) a dépassé les 10 minutes initiales.
 const OAUTH_STATE_TTL_SECONDS = 900;
 
+// `business_management` : sans lui, une Page détenue par un portefeuille
+// business n'est pas visible (voir MetaGraphClient.listManagedPages).
 const REQUESTED_SCOPES: Record<SocialPlatform, string[]> = {
   [SocialPlatform.FACEBOOK]: [
     'pages_show_list',
     'pages_read_engagement',
     'read_insights',
+    'business_management',
   ],
   [SocialPlatform.INSTAGRAM]: [
     'pages_show_list',
     'pages_read_engagement',
     'instagram_basic',
     'instagram_manage_insights',
+    'business_management',
   ],
 };
 

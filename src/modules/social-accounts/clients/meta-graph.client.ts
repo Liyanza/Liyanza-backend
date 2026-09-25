@@ -108,13 +108,7 @@ export class MetaGraphClient implements SocialPlatformClientInterface {
     platform: SocialPlatform,
     accessToken: string,
   ): Promise<SocialAccountProfile> {
-    const pages = await this.graphGet<{ data: MetaPageEdge[] }>(
-      '/me/accounts',
-      {
-        fields: 'id,name,access_token,instagram_business_account',
-        access_token: accessToken,
-      },
-    );
+    const pages = { data: await this.listManagedPages(accessToken) };
 
     if (platform === SocialPlatform.FACEBOOK) {
       const page = pages.data[0];
@@ -151,6 +145,41 @@ export class MetaGraphClient implements SocialPlatformClientInterface {
       externalAccountName: igProfile.username ?? pageWithInstagram.name,
       accessTokenOverride: pageWithInstagram.access_token,
     };
+  }
+
+  /**
+   * Pages gérées par l'utilisateur. `/me/accounts` ne liste que les Pages
+   * sur lesquelles il a un rôle direct : une Page détenue par un portefeuille
+   * business (et gérée via ce portefeuille) n'y apparaît pas. Dans ce cas,
+   * repli sur les Pages des portefeuilles de l'utilisateur (permission
+   * `business_management`), en ne gardant que celles pour lesquelles Meta
+   * délivre un token de Page, c.-à-d. que l'utilisateur peut réellement gérer.
+   */
+  private async listManagedPages(accessToken: string): Promise<MetaPageEdge[]> {
+    const fields = 'id,name,access_token,instagram_business_account';
+    const direct = await this.graphGet<{ data: MetaPageEdge[] }>(
+      '/me/accounts',
+      { fields, access_token: accessToken },
+    );
+    if (direct.data.length > 0) return direct.data;
+
+    const businesses = await this.graphGet<{ data: { id: string }[] }>(
+      '/me/businesses',
+      { fields: 'id', access_token: accessToken },
+    );
+    const pages: MetaPageEdge[] = [];
+    for (const business of businesses.data) {
+      for (const edge of ['owned_pages', 'client_pages']) {
+        const result = await this.graphGet<{ data: MetaPageEdge[] }>(
+          `/${business.id}/${edge}`,
+          { fields, access_token: accessToken },
+        );
+        pages.push(...result.data.filter((page) => page.access_token));
+      }
+    }
+    return pages.filter(
+      (page, index) => pages.findIndex((p) => p.id === page.id) === index,
+    );
   }
 
   async getInsights(
