@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { IAEngineInterface } from './ia-engine.interface';
 import type {
+  AskPublicQuestionParams,
   AskQuestionParams,
   AskQuestionResult,
   GenerateRecommendationsParams,
@@ -13,6 +14,15 @@ export class IAEngineMock implements IAEngineInterface {
     await new Promise((resolve) => setTimeout(resolve, 300));
     return {
       answer: `Mock response to: "${params.userMessage}" (Mock IA)`,
+    };
+  }
+
+  async askPublicQuestion(
+    params: AskPublicQuestionParams,
+  ): Promise<AskQuestionResult> {
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    return {
+      answer: `Mock public response to: "${params.userMessage}" (Mock IA)`,
     };
   }
 

@@ -251,6 +251,29 @@ export class EnvironmentVariables {
   IA_SERVICE_INTERNAL_TOKEN?: string;
 
   /**
+   * Secret partagé avec le site (Next.js sur Vercel), qui l'envoie dans
+   * `X-Web-Proxy-Secret` avec l'IP réelle du visiteur (`X-Visitor-IP`) sur
+   * `POST /public/assistant/ask`. Sans lui, tous les visiteurs relayés par
+   * Vercel partagent la même IP, donc le même quota. Facultatif en local.
+   */
+  @ValidateIf((env: EnvironmentVariables) => !!env.WEB_PROXY_SECRET)
+  @IsString()
+  @MinLength(32, {
+    message: 'WEB_PROXY_SECRET must be at least 32 characters long.',
+  })
+  @NotEquals('changeme')
+  WEB_PROXY_SECRET?: string;
+
+  /**
+   * Nombre maximal de questions par jour à l'assistant vitrine, tous
+   * visiteurs confondus (protège le quota Gemini). Défaut : 300.
+   */
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  PUBLIC_ASSISTANT_DAILY_LIMIT?: number;
+
+  /**
    * Intégration Meta Graph API (BACK-502/503/504) — OAuth Facebook/Instagram
    * pour les campagnes digitales. `META_APP_SECRET` ne quitte jamais ce
    * process (jamais renvoyé au client, jamais loggé).

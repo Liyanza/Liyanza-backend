@@ -45,6 +45,25 @@ describe('IAEngineHttpClient', () => {
     });
   });
 
+  it('should send public questions in "public" mode with only the history as context', async () => {
+    post.mockReturnValue(of({ data: { answer: 'Bienvenue sur Kiyanza.' } }));
+    const client = new IAEngineHttpClient(http, configService);
+    const recentMessages = [{ sender: 'USER' as const, content: 'Bonjour' }];
+
+    await expect(
+      client.askPublicQuestion({ userMessage: 'Tarifs ?', recentMessages }),
+    ).resolves.toEqual({ answer: 'Bienvenue sur Kiyanza.' });
+    expect(post).toHaveBeenCalledWith(
+      'https://ia.example.com/ask',
+      {
+        mode: 'public',
+        userMessage: 'Tarifs ?',
+        context: { recentMessages },
+      },
+      expect.anything(),
+    );
+  });
+
   it('should reject when the service answers without text', async () => {
     post.mockReturnValue(of({ data: {} }));
     const client = new IAEngineHttpClient(http, configService);

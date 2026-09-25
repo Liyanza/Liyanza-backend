@@ -1,6 +1,6 @@
 import { IsNotEmpty, IsString, MaxLength } from 'class-validator';
 
-export class CreateConversationDto {
+export class UpdateConversationDto {
   @IsString()
   @IsNotEmpty()
   @MaxLength(120)

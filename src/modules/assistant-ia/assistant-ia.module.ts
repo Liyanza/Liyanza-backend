@@ -7,14 +7,17 @@ import { PrismaModule } from '../prisma/prisma.module';
 import { IA_ENGINE_TOKEN } from './clients/ia-engine.interface';
 import { IAEngineMock } from './clients/ia-engine.mock';
 import { IAEngineHttpClient } from './clients/ia-engine.http';
+import { PublicAssistantController } from './public-assistant.controller';
+import { PublicAssistantService } from './public-assistant.service';
 
 @Module({
   // Une réponse du chatbot enchaîne jusqu'à deux appels LLM (génération SQL
   // puis réponse finale) : 10 s, comme pour Brevo, serait bien trop court.
   imports: [PrismaModule, HttpModule.register({ timeout: 120_000 })],
-  controllers: [AssistantIController],
+  controllers: [AssistantIController, PublicAssistantController],
   providers: [
     AssistantIService,
+    PublicAssistantService,
     {
       provide: IA_ENGINE_TOKEN,
       useFactory: (configService: ConfigService, http: HttpService) =>

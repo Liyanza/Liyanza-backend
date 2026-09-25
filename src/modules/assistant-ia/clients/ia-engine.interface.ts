@@ -13,8 +13,33 @@ export interface AskQuestionContext {
     businessSector: string;
     address: string;
   };
+  /**
+   * Campagne affichée à l'écran quand la question est posée depuis le
+   * Copilot (modèle Pydantic `CampaignContext`). Chargée par le backend,
+   * toujours dans le périmètre de l'entreprise de l'utilisateur.
+   */
+  campaign?: CampaignContext;
   /** Fenêtre bornée, du plus ancien au plus récent (20 max côté Python). */
-  recentMessages?: Array<{ sender: 'USER' | 'AI'; content: string }>;
+  recentMessages?: ChatHistoryMessage[];
+}
+
+export interface ChatHistoryMessage {
+  sender: 'USER' | 'AI';
+  content: string;
+}
+
+export interface CampaignContext {
+  name: string;
+  objective: string;
+  status: string;
+  plannedBudget: number;
+  /** Dates au format AAAA-MM-JJ. */
+  startDate: string;
+  endDate: string;
+  /** Ex: "Radio", "Affichage", "FACEBOOK". */
+  channels: string[];
+  /** Dernière valeur connue de chaque indicateur (`Statistic`). */
+  results: Record<string, number>;
 }
 
 export interface AskQuestionParams {
@@ -25,6 +50,16 @@ export interface AskQuestionParams {
 
 export interface AskQuestionResult {
   answer: string;
+}
+
+/**
+ * Question d'un visiteur anonyme du site vitrine (mode `public` du service
+ * chatbot : prompt de présentation, aucune donnée, aucun SQL). L'historique
+ * vient du navigateur du visiteur : 4 messages au plus.
+ */
+export interface AskPublicQuestionParams {
+  userMessage: string;
+  recentMessages?: ChatHistoryMessage[];
 }
 
 export interface GenerateRecommendationsParams {
@@ -51,6 +86,9 @@ export interface GenerateRecommendationsResult {
 // runtime difference and no eslint config changes needed.
 export interface IAEngineInterface {
   askQuestion: (params: AskQuestionParams) => Promise<AskQuestionResult>;
+  askPublicQuestion: (
+    params: AskPublicQuestionParams,
+  ) => Promise<AskQuestionResult>;
   generateRecommendations: (
     params: GenerateRecommendationsParams,
   ) => Promise<GenerateRecommendationsResult>;
