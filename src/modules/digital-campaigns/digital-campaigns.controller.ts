@@ -1,5 +1,6 @@
 import {
   Controller,
+  Delete,
   Get,
   Put,
   Post,
@@ -21,6 +22,8 @@ import {
 import { DigitalCampaignsService } from './digital-campaigns.service';
 import { UpsertDigitalDetailsDto } from './dto/upsert-digital-details.dto';
 import { SelectDigitalChannelsDto } from './dto/select-digital-channels.dto';
+import { LinkMetaCampaignDto } from './dto/link-meta-campaign.dto';
+import { CampaignPerformanceService } from './performance/campaign-performance.service';
 import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
@@ -42,7 +45,68 @@ interface AuthenticatedRequest extends ExpressRequest {
 export class DigitalCampaignsController {
   constructor(
     private readonly digitalCampaignsService: DigitalCampaignsService,
+    private readonly performanceService: CampaignPerformanceService,
   ) {}
+
+  // ---- Prévu vs réel (résultats Facebook Ads) -----------------------------
+
+  @Get('meta-campaigns')
+  @Roles(Role.ADMIN, Role.MARKETING_MANAGER, Role.COMMUNITY_MANAGER)
+  @ApiOperation({
+    summary: 'List the Facebook Ads campaigns that can be linked',
+  })
+  @ApiResponse({
+    status: 409,
+    description: 'Facebook ads access missing or expired',
+  })
+  async listMetaCampaigns(
+    @Param('id') campaignId: string,
+    @Request() req: AuthenticatedRequest,
+  ) {
+    return this.performanceService.listMetaCampaigns(campaignId, req.user);
+  }
+
+  @Put('meta-campaign')
+  @Roles(Role.ADMIN, Role.MARKETING_MANAGER, Role.COMMUNITY_MANAGER)
+  @ApiOperation({ summary: 'Link the campaign to its Facebook Ads campaign' })
+  async linkMetaCampaign(
+    @Param('id') campaignId: string,
+    @Body() dto: LinkMetaCampaignDto,
+    @Request() req: AuthenticatedRequest,
+  ) {
+    return this.performanceService.linkMetaCampaign(
+      campaignId,
+      dto.metaCampaignId,
+      req.user,
+    );
+  }
+
+  @Delete('meta-campaign')
+  @Roles(Role.ADMIN, Role.MARKETING_MANAGER, Role.COMMUNITY_MANAGER)
+  @ApiOperation({ summary: 'Unlink the Facebook Ads campaign' })
+  async unlinkMetaCampaign(
+    @Param('id') campaignId: string,
+    @Request() req: AuthenticatedRequest,
+  ) {
+    return this.performanceService.unlinkMetaCampaign(campaignId, req.user);
+  }
+
+  @Get('performance-reelle')
+  @Roles(Role.ADMIN, Role.MARKETING_MANAGER, Role.COMMUNITY_MANAGER)
+  @ApiOperation({
+    summary: 'Actual Facebook Ads results compared with the latest simulation',
+  })
+  async getPerformance(
+    @Param('id') campaignId: string,
+    @Query('refresh') refresh: string | undefined,
+    @Request() req: AuthenticatedRequest,
+  ) {
+    return this.performanceService.getPerformance(
+      campaignId,
+      req.user,
+      refresh === '1' || refresh === 'true',
+    );
+  }
 
   @Put('digital-details')
   @Roles(Role.ADMIN, Role.MARKETING_MANAGER, Role.COMMUNITY_MANAGER)

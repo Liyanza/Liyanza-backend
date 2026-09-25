@@ -31,6 +31,9 @@ interface UpsertArgsForTest {
     accessTokenCiphertext: string;
     accessTokenIv: string;
     accessTokenTag: string;
+    adsTokenCiphertext?: string;
+    adsTokenIv?: string;
+    adsTokenTag?: string;
   };
 }
 function getUpsertArgs(mock: jest.Mock, callIndex: number): UpsertArgsForTest {
@@ -300,6 +303,18 @@ describe('SocialAccountsService', () => {
         ENCRYPTION_KEY,
       );
       expect(decrypted).toBe('page-token');
+      // Facebook : le token UTILISATEUR (ads_read) est aussi conservé,
+      // chiffré, pour lire les résultats publicitaires.
+      expect(
+        decryptToken(
+          {
+            ciphertext: args.create.adsTokenCiphertext!,
+            iv: args.create.adsTokenIv!,
+            tag: args.create.adsTokenTag!,
+          },
+          ENCRYPTION_KEY,
+        ),
+      ).toBe('user-token');
 
       expect(queueService.addJob).toHaveBeenCalledWith(
         'social-metrics-sync',

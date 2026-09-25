@@ -9,6 +9,7 @@ import { RedisModule } from '../redis/redis.module';
 import { QueueModule } from '../queue/queue.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { MetaGraphClient } from './clients/meta-graph.client';
+import { MetaAdsClient } from './clients/meta-ads.client';
 import { SOCIAL_PLATFORM_CLIENT_TOKEN } from './clients/social-platform-client.interface';
 
 @Module({
@@ -24,11 +25,12 @@ import { SOCIAL_PLATFORM_CLIENT_TOKEN } from './clients/social-platform-client.i
     SocialAccountsService,
     SocialAccountsSchedulerService,
     SocialMetricsSyncProcessor,
+    MetaAdsClient,
     {
       provide: SOCIAL_PLATFORM_CLIENT_TOKEN,
       useClass: MetaGraphClient,
     },
   ],
-  exports: [SocialAccountsService],
+  exports: [SocialAccountsService, MetaAdsClient],
 })
 export class SocialAccountsModule {}
