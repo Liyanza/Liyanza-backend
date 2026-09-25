@@ -643,15 +643,21 @@ model DigitalSimulation {
   conversionRate     Float?
 
   /// DigitalSimulationScenarioSnapshot[] — un par scénario comparé (A/B/C).
-  scenarios        Json @default("[]")
+  scenarios        Json  @default("[]")
   /// DigitalSimulationChannelSnapshot[] — détail du scénario recommandé,
   /// un par canal réellement sélectionné (jamais WhatsApp/TikTok/YouTube,
   /// non intégrés — voir DigitalCampaignsService.buildSimulationExtras).
-  channelBreakdown Json @default("[]")
+  channelBreakdown Json  @default("[]")
   /// DigitalSimulationWeekSnapshot[] — évolution hebdomadaire du scénario
   /// recommandé, sur la durée de la campagne (5 semaines max, voir
   /// DigitalCampaignsService.buildSimulationExtras).
-  weeklySeries     Json @default("[]")
+  weeklySeries     Json  @default("[]")
+  /// Analyse de la simulation par l'assistant IA (Gemini, service
+  /// kiyanza_assistant_ia, POST /simulation/analyze) : { summary, strengths[],
+  /// risks[], recommendations[{ title, detail }], scenarioChoice }. null si le
+  /// service IA n'est pas configuré ou n'a pas répondu : le texte de repli du
+  /// moteur (narrativeSummary) reste alors affiché.
+  aiAnalysis       Json?
 
   campaignId String
   campaign   Campaign @relation(fields: [campaignId], references: [id])

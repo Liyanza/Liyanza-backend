@@ -16,6 +16,7 @@ import {
   Role,
   SocialPlatform,
 } from '@prisma/client';
+import { SimulationAnalysisClient } from './clients/simulation-analysis.client';
 
 describe('DigitalCampaignsService', () => {
   let service: DigitalCampaignsService;
@@ -25,6 +26,7 @@ describe('DigitalCampaignsService', () => {
     digitalCampaignChannel: { upsert: jest.Mock };
     socialAccount: { findMany: jest.Mock };
     platformMetric: { findFirst: jest.Mock };
+    company: { findUnique: jest.Mock };
     digitalSimulation: {
       create: jest.Mock;
       findMany: jest.Mock;
@@ -33,6 +35,7 @@ describe('DigitalCampaignsService', () => {
     $transaction: jest.Mock;
   };
   let simulationEngine: { simulate: jest.Mock };
+  let simulationAnalysis: { analyze: jest.Mock };
 
   const user: AuthenticatedUser = {
     userId: 'user-1',
@@ -50,6 +53,8 @@ describe('DigitalCampaignsService', () => {
 
   beforeEach(async () => {
     simulationEngine = { simulate: jest.fn() };
+    // Par défaut : service IA non configuré (aucune analyse).
+    simulationAnalysis = { analyze: jest.fn().mockResolvedValue(null) };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -65,6 +70,7 @@ describe('DigitalCampaignsService', () => {
             digitalCampaignChannel: { upsert: jest.fn() },
             socialAccount: { findMany: jest.fn() },
             platformMetric: { findFirst: jest.fn() },
+            company: { findUnique: jest.fn().mockResolvedValue(null) },
             digitalSimulation: {
               create: jest.fn(),
               findMany: jest.fn(),
@@ -77,6 +83,7 @@ describe('DigitalCampaignsService', () => {
           provide: DIGITAL_SIMULATION_ENGINE_TOKEN,
           useValue: simulationEngine,
         },
+        { provide: SimulationAnalysisClient, useValue: simulationAnalysis },
       ],
     }).compile();
 
@@ -362,6 +369,138 @@ describe('DigitalCampaignsService', () => {
       await service.createSimulation('camp-1', user);
 
       expect(callOrder).toEqual(['engine', 'persist']);
+    });
+
+    describe('AI analysis', () => {
+      const engineResult = {
+        predictedReach: 61200,
+        predictedEngagementRate: 3.1,
+        predictedCtr: 1.4,
+        predictedRoas: 1.8,
+        avgCpc: 145,
+        costPerAcquisition: 5200,
+        conversionRate: 2.8,
+        narrativeSummary: 'Texte de repli du moteur',
+        warnings: ['Aucun compte lié'],
+        scenarios: [{ id: 'A', label: 'Équilibré', isRecommended: true }],
+        channelBreakdown: [{ platform: 'FACEBOOK', budgetAmount: 1000 }],
+        weeklySeries: [],
+      };
+      const analysis = {
+        summary: 'Cette campagne peut toucher environ 61 200 personnes.',
+        strengths: ['Budget équilibré'],
+        risks: ['Instagram non lié'],
+        recommendations: [
+          { title: 'Lier Instagram', detail: 'Pour fiabiliser.' },
+        ],
+        scenarioChoice: 'Le scénario Équilibré est le meilleur compromis.',
+      };
+
+      beforeEach(() => {
+        prisma.campaign.findFirst.mockResolvedValue({
+          ...digitalCampaign,
+          name: 'Promo rentrée',
+          startDate: new Date('2026-10-01T00:00:00Z'),
+          endDate: new Date('2026-10-31T00:00:00Z'),
+        });
+        prisma.digitalCampaignDetails.findUnique.mockResolvedValue({
+          id: 'details-1',
+          objective: DigitalObjective.CONVERSION,
+          ageMin: 18,
+          ageMax: 45,
+          targetGender: 'ALL',
+          targetLocations: ['Douala'],
+          targetInterests: ['pâtisserie'],
+          budgetAllocation: BudgetAllocationType.TOTAL,
+          channels: [
+            { platform: SocialPlatform.FACEBOOK, socialAccount: null },
+          ],
+        });
+        simulationEngine.simulate.mockResolvedValue(engineResult);
+        prisma.digitalSimulation.create.mockResolvedValue({ id: 'sim-1' });
+      });
+
+      it('should send the simulation, scoped to the company, and store the analysis', async () => {
+        const companyProfile = {
+          name: 'Boulangerie Akwa',
+          businessSector: 'Agroalimentaire',
+          address: 'Douala',
+        };
+        prisma.company.findUnique.mockResolvedValue(companyProfile);
+        simulationAnalysis.analyze.mockResolvedValue(analysis);
+
+        await service.createSimulation('camp-1', user);
+
+        expect(prisma.company.findUnique).toHaveBeenCalledWith(
+          expect.objectContaining({ where: { id: 'company-1' } }),
+        );
+        expect(simulationAnalysis.analyze).toHaveBeenCalledWith(
+          expect.objectContaining({
+            campaignName: 'Promo rentrée',
+            objective: DigitalObjective.CONVERSION,
+            budget: { amount: 1000, allocation: BudgetAllocationType.TOTAL },
+            startDate: '2026-10-01',
+            endDate: '2026-10-31',
+            channels: ['FACEBOOK'],
+            companyProfile,
+            results: expect.objectContaining({
+              predictedReach: 61200,
+              warnings: ['Aucun compte lié'],
+            }) as object,
+            scenarios: engineResult.scenarios,
+          }),
+        );
+        expect(prisma.digitalSimulation.create).toHaveBeenCalledWith({
+          data: expect.objectContaining({
+            narrativeSummary: analysis.summary,
+            aiAnalysis: analysis,
+          }) as object,
+        });
+      });
+
+      it('should still save the simulation, with the engine text, when the analysis fails', async () => {
+        simulationAnalysis.analyze.mockRejectedValue(
+          new Error('IA service responded 503'),
+        );
+
+        await service.createSimulation('camp-1', user);
+
+        const [{ data }] = prisma.digitalSimulation.create.mock.calls[0] as [
+          { data: Record<string, unknown> },
+        ];
+        expect(data.narrativeSummary).toBe('Texte de repli du moteur');
+        expect(data).not.toHaveProperty('aiAnalysis');
+      });
+
+      it('should save without analysis when the IA service is not configured', async () => {
+        await service.createSimulation('camp-1', user);
+
+        const [{ data }] = prisma.digitalSimulation.create.mock.calls[0] as [
+          { data: Record<string, unknown> },
+        ];
+        expect(data.narrativeSummary).toBe('Texte de repli du moteur');
+        expect(data).not.toHaveProperty('aiAnalysis');
+      });
+
+      it('should analyse after the engine and before persisting', async () => {
+        const callOrder: string[] = [];
+        simulationEngine.simulate.mockImplementation(() => {
+          callOrder.push('engine');
+          return Promise.resolve(engineResult);
+        });
+        simulationAnalysis.analyze.mockImplementation(() => {
+          callOrder.push('analysis');
+          return Promise.resolve(analysis);
+        });
+        prisma.digitalSimulation.create.mockImplementation(() => {
+          callOrder.push('persist');
+          return Promise.resolve({ id: 'sim-1' });
+        });
+
+        await service.createSimulation('camp-1', user);
+
+        expect(callOrder).toEqual(['engine', 'analysis', 'persist']);
+      });
     });
   });
 });
