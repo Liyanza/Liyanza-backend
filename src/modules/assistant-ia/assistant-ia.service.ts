@@ -4,6 +4,7 @@ import {
   ForbiddenException,
   InternalServerErrorException,
   Inject,
+  Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
@@ -11,13 +12,27 @@ import { assertSameCompany } from '../auth/utils/company-scope.util';
 import { CreateConversationDto } from './dto/create-conversation.dto';
 import { EnvoyerMessageDto } from './dto/envoyer-message.dto';
 import { IA_ENGINE_TOKEN } from './clients/ia-engine.interface';
-import type { IAEngineInterface } from './clients/ia-engine.interface';
+import type {
+  AskQuestionContext,
+  IAEngineInterface,
+} from './clients/ia-engine.interface';
 
 /** Nombre maximal de messages renvoyés par `getConversation`. */
 const MAX_CONVERSATION_MESSAGES = 200;
 
+/**
+ * Historique transmis au moteur IA pour qu'il suive le fil de la
+ * conversation : les derniers échanges seulement, chacun tronqué — un
+ * message peut faire 5 000 caractères (`EnvoyerMessageDto`), les renvoyer
+ * tous gonflerait chaque appel LLM (latence, quota Gemini).
+ */
+const IA_CONTEXT_MESSAGES = 10;
+const IA_CONTEXT_MESSAGE_MAX_LENGTH = 1_500;
+
 @Injectable()
 export class AssistantIService {
+  private readonly logger = new Logger(AssistantIService.name);
+
   constructor(
     private prisma: PrismaService,
     @Inject(IA_ENGINE_TOKEN) private iaEngine: IAEngineInterface,
@@ -68,16 +83,27 @@ export class AssistantIService {
     // can be removed since `companyId` will be properly typed again).
     assertSameCompany(user, conversation.companyId, 'Conversation');
 
+    const context = await this.buildIAContext(
+      conversation.id,
+      conversation.topic,
+      user.companyId,
+    );
+
     // Call IA engine
     let iaResponse: string;
     try {
       const result = await this.iaEngine.askQuestion({
         conversationId,
         userMessage: dto.content,
-        context: { topic: conversation.topic },
+        context,
       });
       iaResponse = result.answer;
-    } catch {
+    } catch (error) {
+      this.logger.error(
+        `IA engine failed for conversation ${conversationId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
       throw new InternalServerErrorException(
         'Failed to get response from AI engine. Please try again later.',
       );
@@ -117,6 +143,50 @@ export class AssistantIService {
     return {
       userMessage,
       iaMessage,
+    };
+  }
+
+  /**
+   * Profil de l'entreprise + derniers échanges, lus AVANT d'enregistrer le
+   * nouveau message (il est déjà transmis dans `userMessage`). Toujours
+   * limités à l'entreprise de l'utilisateur : `assertSameCompany` a été
+   * vérifié par l'appelant.
+   */
+  private async buildIAContext(
+    conversationId: string,
+    topic: string,
+    companyId: string | null,
+  ): Promise<AskQuestionContext> {
+    const [company, lastMessages] = await Promise.all([
+      companyId
+        ? this.prisma.company.findUnique({
+            where: { id: companyId },
+            select: { name: true, businessSector: true, address: true },
+          })
+        : null,
+      this.prisma.aiMessage.findMany({
+        where: { conversationId },
+        orderBy: { sentAt: 'desc' },
+        take: IA_CONTEXT_MESSAGES,
+        select: { sender: true, content: true },
+      }),
+    ]);
+
+    const recentMessages = lastMessages
+      .reverse()
+      .filter(
+        (m): m is { sender: 'USER' | 'AI'; content: string } =>
+          m.sender === 'USER' || m.sender === 'AI',
+      )
+      .map((m) => ({
+        sender: m.sender,
+        content: m.content.slice(0, IA_CONTEXT_MESSAGE_MAX_LENGTH),
+      }));
+
+    return {
+      topic,
+      ...(company && { companyProfile: company }),
+      ...(recentMessages.length > 0 && { recentMessages }),
     };
   }
 

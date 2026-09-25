@@ -23,6 +23,10 @@ type MockedPrisma = {
   };
   aiMessage: {
     create: jest.Mock;
+    findMany: jest.Mock;
+  };
+  company: {
+    findUnique: jest.Mock;
   };
   campaign: {
     findFirst: jest.Mock;
@@ -76,6 +80,10 @@ describe('AssistantIService', () => {
               // `tx.aiMessage.create`, cet appel renverra `undefined` et les
               // assertions sur `txClient.aiMessage.create` échoueront.
               create: undefined as unknown as jest.Mock,
+              findMany: jest.fn(),
+            },
+            company: {
+              findUnique: jest.fn(),
             },
             campaign: {
               findFirst: jest.fn(),
@@ -106,6 +114,10 @@ describe('AssistantIService', () => {
     service = module.get<AssistantIService>(AssistantIService);
     prisma = module.get(PrismaService);
     iaEngine = module.get(IA_ENGINE_TOKEN);
+
+    // Par défaut : conversation neuve, entreprise sans profil lisible.
+    prisma.aiMessage.findMany.mockResolvedValue([]);
+    prisma.company.findUnique.mockResolvedValue(null);
   });
 
   describe('createConversation', () => {
@@ -176,6 +188,76 @@ describe('AssistantIService', () => {
       // Régression du bug historique : les écritures doivent passer par le
       // client transactionnel `tx`, jamais par `this.prisma` directement.
       expect(txClient.aiMessage.create).toHaveBeenCalledTimes(2);
+    });
+
+    it('should send the company profile and the recent history, oldest first, to the IA engine', async () => {
+      const conversationId = 'conv-1';
+      const companyProfile = {
+        name: 'Kiyanza Demo SARL',
+        businessSector: 'Agroalimentaire',
+        address: 'Akwa, Douala',
+      };
+      prisma.aiConversation.findUnique.mockResolvedValue({
+        id: conversationId,
+        topic: 'Canaux',
+        companyId: 'company-1',
+      });
+      prisma.company.findUnique.mockResolvedValue(companyProfile);
+      // Renvoyés du plus récent au plus ancien (orderBy sentAt desc).
+      prisma.aiMessage.findMany.mockResolvedValue([
+        { sender: 'AI', content: 'Bonjour ! Comment puis-je vous aider ?' },
+        { sender: 'USER', content: 'Bonjour' },
+      ]);
+      iaEngine.askQuestion.mockResolvedValue({ answer: 'Réponse' });
+      txClient.aiMessage.create.mockResolvedValue({});
+
+      await service.envoyerMessage(
+        conversationId,
+        { content: 'Quel réseau social choisir ?' },
+        mockUser,
+      );
+
+      expect(prisma.company.findUnique).toHaveBeenCalledWith({
+        where: { id: mockUser.companyId },
+        select: { name: true, businessSector: true, address: true },
+      });
+      expect(prisma.aiMessage.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { conversationId },
+          orderBy: { sentAt: 'desc' },
+          take: 10,
+        }),
+      );
+      expect(iaEngine.askQuestion).toHaveBeenCalledWith({
+        conversationId,
+        userMessage: 'Quel réseau social choisir ?',
+        context: {
+          topic: 'Canaux',
+          companyProfile,
+          recentMessages: [
+            { sender: 'USER', content: 'Bonjour' },
+            { sender: 'AI', content: 'Bonjour ! Comment puis-je vous aider ?' },
+          ],
+        },
+      });
+    });
+
+    it('should truncate long history messages sent to the IA engine', async () => {
+      prisma.aiConversation.findUnique.mockResolvedValue({
+        id: 'conv-1',
+        topic: 'test',
+        companyId: 'company-1',
+      });
+      prisma.aiMessage.findMany.mockResolvedValue([
+        { sender: 'USER', content: 'x'.repeat(5000) },
+      ]);
+      iaEngine.askQuestion.mockResolvedValue({ answer: 'ok' });
+      txClient.aiMessage.create.mockResolvedValue({});
+
+      await service.envoyerMessage('conv-1', { content: 'Suite' }, mockUser);
+
+      const [params] = iaEngine.askQuestion.mock.calls[0];
+      expect(params.context?.recentMessages?.[0].content).toHaveLength(1500);
     });
 
     it('should throw if conversation not found', async () => {
