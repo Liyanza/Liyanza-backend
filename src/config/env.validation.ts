@@ -382,6 +382,23 @@ export class EnvironmentVariables {
   FACEBOOK_LOGIN_REDIRECT_URI!: string;
 
   /**
+   * App Meta DÉDIÉE à la connexion Facebook, optionnelle (repli sur
+   * META_APP_ID/META_APP_SECRET). Meta ne permet plus de combiner le cas
+   * d'utilisation "Facebook Login" avec "Tout gérer sur votre Page" /
+   * "Instagram" dans une même App : la liaison des comptes pro utilise alors
+   * META_APP_*, et la connexion cette seconde App. Les deux vont ensemble.
+   */
+  @ValidateIf((env: EnvironmentVariables) => !!env.FACEBOOK_LOGIN_APP_SECRET)
+  @IsString()
+  @IsNotEmpty()
+  FACEBOOK_LOGIN_APP_ID?: string;
+
+  @ValidateIf((env: EnvironmentVariables) => !!env.FACEBOOK_LOGIN_APP_ID)
+  @IsString()
+  @IsNotEmpty()
+  FACEBOOK_LOGIN_APP_SECRET?: string;
+
+  /**
    * Page du frontend (Liyanza, Next.js) vers laquelle ce backend redirige le
    * navigateur une fois la connexion Google/Facebook traitée. Ne porte
    * JAMAIS les tokens en clair dans l'URL (fuite possible via historique
