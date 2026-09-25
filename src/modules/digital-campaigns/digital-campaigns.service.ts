@@ -5,6 +5,7 @@ import {
   ForbiddenException,
   BadRequestException,
   InternalServerErrorException,
+  ServiceUnavailableException,
   Inject,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
@@ -342,39 +343,12 @@ export class DigitalCampaignsService {
     companyId: string | null,
   ): Promise<SimulationAnalysis | null> {
     try {
-      const company = companyId
-        ? await this.prisma.company.findUnique({
-            where: { id: companyId },
-            select: { name: true, businessSector: true, address: true },
-          })
-        : null;
-      const toDay = (date: Date) => date.toISOString().slice(0, 10);
-
-      return await this.simulationAnalysis.analyze({
-        campaignName: campaign.name,
-        objective: parameters.objective,
-        budget: {
-          amount: parameters.budget.amount,
-          allocation: parameters.budget.allocation,
-        },
-        startDate: toDay(campaign.startDate),
-        endDate: toDay(campaign.endDate),
-        audience: parameters.audience,
-        channels: parameters.channels.map((channel) => channel.platform),
-        ...(company && { companyProfile: company }),
-        results: {
-          predictedReach: result.predictedReach,
-          predictedEngagementRate: result.predictedEngagementRate,
-          predictedCtr: result.predictedCtr,
-          predictedRoas: result.predictedRoas,
-          avgCpc: result.avgCpc,
-          costPerAcquisition: result.costPerAcquisition,
-          conversionRate: result.conversionRate,
-          warnings: result.warnings,
-        },
-        scenarios: result.scenarios,
-        channelBreakdown: result.channelBreakdown,
-      });
+      return await this.requestAnalysis(
+        campaign,
+        parameters,
+        result,
+        companyId,
+      );
     } catch (error) {
       this.logger.warn(
         `Simulation saved without AI analysis for campaign ${campaign.id}: ${
@@ -383,6 +357,121 @@ export class DigitalCampaignsService {
       );
       return null;
     }
+  }
+
+  /**
+   * Génère l'analyse IA d'une simulation déjà enregistrée sans elle (service
+   * IA indisponible ou trop lent au moment de la simulation). Sans nouveau
+   * calcul : les chiffres restent ceux du moteur, enregistrés. Idempotent :
+   * une simulation déjà analysée est renvoyée telle quelle.
+   */
+  async analyzeExistingSimulation(
+    campaignId: string,
+    simulationId: string,
+    user: AuthenticatedUser,
+  ) {
+    const campaign = await this.validateDigitalCampaignAccess(campaignId, user);
+    const simulation = await this.prisma.digitalSimulation.findFirst({
+      where: { id: simulationId, campaignId: campaign.id },
+    });
+    if (!simulation) {
+      throw new NotFoundException(`Simulation ${simulationId} not found.`);
+    }
+    if (simulation.aiAnalysis) return simulation;
+
+    const parameters =
+      simulation.inputSnapshot as unknown as DigitalSimulationParameters;
+    const result: DigitalSimulationResult = {
+      predictedReach: simulation.predictedReach ?? 0,
+      predictedEngagementRate: simulation.predictedEngagementRate ?? 0,
+      predictedCtr: simulation.predictedCtr ?? 0,
+      predictedRoas: simulation.predictedRoas ?? 0,
+      narrativeSummary: simulation.narrativeSummary ?? '',
+      warnings: simulation.warnings,
+      avgCpc: simulation.avgCpc ?? 0,
+      costPerAcquisition: simulation.costPerAcquisition ?? 0,
+      conversionRate: simulation.conversionRate ?? 0,
+      scenarios:
+        simulation.scenarios as unknown as DigitalSimulationResult['scenarios'],
+      channelBreakdown:
+        simulation.channelBreakdown as unknown as DigitalSimulationResult['channelBreakdown'],
+      weeklySeries:
+        simulation.weeklySeries as unknown as DigitalSimulationResult['weeklySeries'],
+    };
+
+    let analysis: SimulationAnalysis | null;
+    try {
+      analysis = await this.requestAnalysis(
+        campaign,
+        parameters,
+        result,
+        user.companyId,
+      );
+    } catch (error) {
+      this.logger.warn(
+        `AI analysis retry failed for simulation ${simulation.id}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      throw new ServiceUnavailableException(
+        'The AI analysis is temporarily unavailable. Please try again in a moment.',
+      );
+    }
+    if (!analysis) {
+      throw new ServiceUnavailableException(
+        'The AI analysis is not configured on this server.',
+      );
+    }
+
+    return this.prisma.digitalSimulation.update({
+      where: { id: simulation.id },
+      data: {
+        aiAnalysis: analysis as unknown as Prisma.InputJsonValue,
+        narrativeSummary: analysis.summary,
+      },
+    });
+  }
+
+  /** Appel au service IA ; lève en cas d'échec, `null` s'il n'est pas configuré. */
+  private async requestAnalysis(
+    campaign: Campaign,
+    parameters: DigitalSimulationParameters,
+    result: DigitalSimulationResult,
+    companyId: string | null,
+  ): Promise<SimulationAnalysis | null> {
+    const company = companyId
+      ? await this.prisma.company.findUnique({
+          where: { id: companyId },
+          select: { name: true, businessSector: true, address: true },
+        })
+      : null;
+    const toDay = (date: Date) => date.toISOString().slice(0, 10);
+
+    return this.simulationAnalysis.analyze({
+      campaignName: campaign.name,
+      objective: parameters.objective,
+      budget: {
+        amount: parameters.budget.amount,
+        allocation: parameters.budget.allocation,
+      },
+      startDate: toDay(campaign.startDate),
+      endDate: toDay(campaign.endDate),
+      audience: parameters.audience,
+      channels: parameters.channels.map((channel) => channel.platform),
+      ...(company && { companyProfile: company }),
+      results: {
+        predictedReach: result.predictedReach,
+        predictedEngagementRate: result.predictedEngagementRate,
+        predictedCtr: result.predictedCtr,
+        predictedRoas: result.predictedRoas,
+        avgCpc: result.avgCpc,
+        costPerAcquisition: result.costPerAcquisition,
+        conversionRate: result.conversionRate,
+        warnings: result.warnings,
+      },
+      scenarios: result.scenarios,
+      channelBreakdown: result.channelBreakdown,
+    });
   }
 
   async getSimulations(
