@@ -39,6 +39,28 @@ export interface DigitalSimulationParameters {
     interests: string[];
   };
   channels: DigitalSimulationChannelInput[];
+  /**
+   * Références de coûts locales tirées de campagnes Facebook Ads réelles
+   * (LocalBenchmarksService) ; absentes tant qu'il n'y en a pas assez.
+   */
+  calibration?: LocalBenchmark | null;
+}
+
+/**
+ * Médianes mesurées sur des campagnes Facebook Ads réelles, pour un objectif :
+ * - `company` : campagnes de l'entreprise elle-même ;
+ * - `city` / `objective` : agrégat anonyme d'au moins 3 entreprises, dans la
+ *   même ville ou toutes villes confondues.
+ * Le moteur les mélange aux références de marché selon leur nombre.
+ */
+export interface LocalBenchmark {
+  scope: 'company' | 'city' | 'objective';
+  city: string | null;
+  campaigns: number;
+  companies: number;
+  cpmFcfa: number | null;
+  ctrPercent: number | null;
+  conversionRatePercent: number | null;
 }
 
 /**

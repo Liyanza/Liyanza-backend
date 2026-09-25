@@ -272,3 +272,37 @@ export function comparePerformance(input: {
     daily,
   };
 }
+
+/** Totaux réels d'une campagne, dépense en FCFA — base des références locales. */
+export interface ObservedTotals {
+  spendXaf: number;
+  impressions: number;
+  reach: number;
+  clicks: number;
+  conversions: number;
+}
+
+/**
+ * Totaux exploitables pour les références de coûts locales ; null si la
+ * campagne n'a pas assez diffusé ou si sa devise n'est pas convertible.
+ */
+export function observedTotals(
+  objective: DigitalObjective,
+  totals: MetaInsightsRow | null,
+  currency: string,
+): ObservedTotals | null {
+  const rate = XAF_RATES[currency.toUpperCase()];
+  if (!totals || rate === undefined) return null;
+  const spendXaf = num(totals.spend) * rate;
+  const impressions = num(totals.impressions);
+  // En dessous, les taux mesurés sont trop instables pour servir de référence.
+  if (spendXaf < 5000 || impressions < 1000) return null;
+  const action = pickConversionAction(objective, totals.actions);
+  return {
+    spendXaf,
+    impressions,
+    reach: num(totals.reach),
+    clicks: clicksOf(totals),
+    conversions: action ? (actionValue(totals.actions, action) ?? 0) : 0,
+  };
+}

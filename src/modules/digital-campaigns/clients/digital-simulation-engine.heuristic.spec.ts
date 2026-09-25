@@ -78,6 +78,53 @@ describe('DigitalSimulationEngineHeuristic', () => {
     expect(result.warnings[0]).not.toContain('connectez');
   });
 
+  it('moves Facebook estimates toward local benchmarks, more with more campaigns', async () => {
+    const base = await engine.simulate(baseParams());
+    // Coûts réels 2x plus élevés que la référence de marché (CPM CONVERSION ~3 750).
+    const calibration = (campaigns: number) => ({
+      scope: 'city' as const,
+      city: 'douala',
+      campaigns,
+      companies: 3,
+      cpmFcfa: 7500,
+      ctrPercent: null,
+      conversionRatePercent: null,
+    });
+
+    const few = await engine.simulate(
+      baseParams({ calibration: calibration(1) }),
+    );
+    const many = await engine.simulate(
+      baseParams({ calibration: calibration(45) }),
+    );
+
+    // CPM plus élevé → moins de portée pour le même budget.
+    expect(few.predictedReach).toBeLessThan(base.predictedReach);
+    expect(many.predictedReach).toBeLessThan(few.predictedReach);
+    // 45 campagnes : 90 % réel → portée proche de la moitié.
+    expect(many.predictedReach / base.predictedReach).toBeCloseTo(0.53, 1);
+  });
+
+  it('never applies Facebook benchmarks to Instagram', async () => {
+    const params = baseParams({
+      channels: [{ platform: 'INSTAGRAM', metrics: null }],
+    });
+    const base = await engine.simulate(params);
+    const calibrated = await engine.simulate({
+      ...params,
+      calibration: {
+        scope: 'objective',
+        city: null,
+        campaigns: 20,
+        companies: 5,
+        cpmFcfa: 9000,
+        ctrPercent: 3,
+        conversionRatePercent: 10,
+      },
+    });
+    expect(calibrated.predictedReach).toBe(base.predictedReach);
+  });
+
   it('emits no warning when the channel has real metrics', async () => {
     const result = await engine.simulate(
       baseParams({

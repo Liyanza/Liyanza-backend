@@ -20,6 +20,7 @@ import {
 } from '../../social-accounts/clients/meta-graph.errors';
 import { DigitalCampaignsService } from '../digital-campaigns.service';
 import { comparePerformance } from './performance-comparison';
+import { LocalBenchmarksService } from './local-benchmarks.service';
 
 /** Résultats Meta mis en cache : l'API est lente et limitée en appels. */
 const INSIGHTS_TTL_SECONDS = 30 * 60;
@@ -50,6 +51,7 @@ export class CampaignPerformanceService {
     private readonly digitalCampaigns: DigitalCampaignsService,
     private readonly socialAccounts: SocialAccountsService,
     private readonly metaAds: MetaAdsClient,
+    private readonly localBenchmarks: LocalBenchmarksService,
   ) {}
 
   /** Campagnes Facebook Ads que l'entreprise peut relier. */
@@ -163,6 +165,21 @@ export class CampaignPerformanceService {
         this.rethrow(error);
       }
       await this.redis.set(key, JSON.stringify(cached), INSIGHTS_TTL_SECONDS);
+      // Résultats frais : ils alimentent aussi les références de coûts locales.
+      await this.localBenchmarks
+        .record({
+          campaignId: campaign.id,
+          companyId: user.companyId!,
+          objective: details.objective,
+          locations: details.targetLocations,
+          currency: details.metaAdCurrency ?? 'XAF',
+          totals: cached.insights.totals,
+        })
+        .catch((error: unknown) =>
+          this.logger.warn(
+            `Benchmark observation not saved: ${error instanceof Error ? error.message : String(error)}`,
+          ),
+        );
     }
 
     const simulation = await this.prisma.digitalSimulation.findFirst({

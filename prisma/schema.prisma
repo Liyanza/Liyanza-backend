@@ -178,6 +178,7 @@ model Campaign {
   qrCodes            QrCode[] // ← BACK-305
   digitalDetails     DigitalCampaignDetails? // ← BACK-501
   digitalSimulations DigitalSimulation[] // ← BACK-501
+  adObservation      AdPerformanceObservation?
 
   @@index([launchedById])
 }
@@ -681,4 +682,32 @@ model DigitalSimulation {
   campaign   Campaign @relation(fields: [campaignId], references: [id])
 
   @@index([campaignId])
+}
+
+/// Résultats réels (totaux depuis le lancement) d'une campagne Facebook Ads
+/// reliée à une campagne digitale : alimentent les références de coûts
+/// locales du moteur de simulation (LocalBenchmarksService). Une ligne par
+/// campagne, mise à jour à chaque lecture des résultats Meta. Jamais exposée
+/// telle quelle : seuls des agrégats (≥ 3 entreprises) servent aux autres
+/// entreprises.
+model AdPerformanceObservation {
+  id             String           @id @default(cuid())
+  objective      DigitalObjective
+  /// Première ville ciblée, normalisée (minuscules, sans accents).
+  city           String?
+  businessSector String?
+  spendXaf       Float
+  impressions    Int
+  reach          Int
+  clicks         Int
+  conversions    Int
+  collectedAt    DateTime         @updatedAt
+  createdAt      DateTime         @default(now())
+
+  campaignId String   @unique
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  companyId  String
+
+  @@index([objective, city])
+  @@index([companyId, objective])
 }
