@@ -130,6 +130,8 @@ describe('AssistantIService', () => {
           useValue: {
             askQuestion: jest.fn(),
             askPublicQuestion: jest.fn(),
+            streamQuestion: jest.fn(),
+            streamPublicQuestion: jest.fn(),
             generateRecommendations: jest.fn(),
           },
         },
@@ -383,6 +385,107 @@ describe('AssistantIService', () => {
       await expect(
         service.envoyerMessage('conv-1', { content: 'Hello' }, mockUser),
       ).rejects.toThrow(InternalServerErrorException);
+    });
+  });
+
+  describe('envoyerMessageStream', () => {
+    /** Flux IA simulé : produit `parts`, puis échoue si `failWith` est fourni. */
+    async function* iaStream(parts: string[], failWith?: Error) {
+      for (const part of parts) {
+        await Promise.resolve();
+        yield part;
+      }
+      if (failWith) throw failWith;
+    }
+
+    it('should relay each chunk, then persist the full exchange and emit it in "done"', async () => {
+      prisma.aiConversation.findUnique.mockResolvedValue(ownConversation());
+      iaEngine.streamQuestion.mockReturnValue(iaStream(['Bon', 'jour']));
+      const userMessage = { id: 'msg-1', sender: 'USER' };
+      const iaMessage = { id: 'msg-2', sender: 'AI', sentAt: new Date() };
+      txClient.aiMessage.create
+        .mockResolvedValueOnce(userMessage)
+        .mockResolvedValueOnce(iaMessage);
+      const emit = jest.fn();
+
+      await service.envoyerMessageStream(
+        'conv-1',
+        { content: 'Salut', campaignId: undefined },
+        mockUser,
+        emit,
+      );
+
+      expect(emit.mock.calls.map(([event]: [unknown]) => event)).toEqual([
+        { type: 'delta', text: 'Bon' },
+        { type: 'delta', text: 'jour' },
+        { type: 'done', userMessage, iaMessage },
+      ]);
+      // La réponse enregistrée est le texte complet, pas le dernier morceau.
+      expect(txClient.aiMessage.create).toHaveBeenLastCalledWith({
+        data: expect.objectContaining({
+          content: 'Bonjour',
+          sender: 'AI',
+        }) as object,
+      });
+      expect(iaEngine.streamQuestion).toHaveBeenCalledWith({
+        conversationId: 'conv-1',
+        userMessage: 'Salut',
+        context: { topic: 'test' },
+      });
+    });
+
+    it('should throw before emitting anything when the IA fails immediately', async () => {
+      prisma.aiConversation.findUnique.mockResolvedValue(ownConversation());
+      iaEngine.streamQuestion.mockReturnValue(
+        iaStream([], new Error('IA service responded 503')),
+      );
+      const emit = jest.fn();
+
+      await expect(
+        service.envoyerMessageStream(
+          'conv-1',
+          { content: 'x' },
+          mockUser,
+          emit,
+        ),
+      ).rejects.toThrow(InternalServerErrorException);
+      expect(emit).not.toHaveBeenCalled();
+      expect(txClient.aiMessage.create).not.toHaveBeenCalled();
+    });
+
+    it('should persist nothing when the stream breaks midway', async () => {
+      prisma.aiConversation.findUnique.mockResolvedValue(ownConversation());
+      iaEngine.streamQuestion.mockReturnValue(
+        iaStream(['Bon'], new Error('IA stream interrupted')),
+      );
+      const emit = jest.fn();
+
+      await expect(
+        service.envoyerMessageStream(
+          'conv-1',
+          { content: 'x' },
+          mockUser,
+          emit,
+        ),
+      ).rejects.toThrow(InternalServerErrorException);
+      expect(emit).toHaveBeenCalledWith({ type: 'delta', text: 'Bon' });
+      expect(txClient.aiMessage.create).not.toHaveBeenCalled();
+    });
+
+    it("should 404 on a colleague's conversation without calling the IA", async () => {
+      prisma.aiConversation.findUnique.mockResolvedValue(
+        ownConversation({ createdById: 'colleague' }),
+      );
+
+      await expect(
+        service.envoyerMessageStream(
+          'conv-1',
+          { content: 'x' },
+          mockUser,
+          jest.fn(),
+        ),
+      ).rejects.toThrow(NotFoundException);
+      expect(iaEngine.streamQuestion).not.toHaveBeenCalled();
     });
   });
 

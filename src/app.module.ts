@@ -1,5 +1,5 @@
 import { Module, MiddlewareConsumer, NestModule } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 import { APP_FILTER, APP_GUARD } from '@nestjs/core';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { ScheduleModule } from '@nestjs/schedule';
@@ -24,6 +24,10 @@ import { RolesGuard } from './modules/auth/guards/roles.guard';
 import { RequestIdMiddleware } from './common/middleware/request-id.middleware';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { RedisThrottlerStorage } from './common/throttler/redis-throttler.storage';
+import {
+  resolveClientIp,
+  type RequestLike,
+} from './common/http/client-ip.util';
 import { RedisService } from './modules/redis/redis.service';
 import { CanauxModule } from './modules/canaux/canaux.module';
 import { DiffusionsModule } from './modules/diffusions/diffusions.module';
@@ -64,12 +68,23 @@ import { SocialAccountsModule } from './modules/social-accounts/social-accounts.
     // Fargate, N tâches), la limite réelle était de N × la limite annoncée et
     // repartait de zéro à chaque redéploiement. On bascule sur un stockage
     // Redis partagé — voir `RedisThrottlerStorage`.
+    //
+    // CORRECTIF : les requêtes du site web arrivent toutes depuis Vercel.
+    // Compter par `req.ip` faisait partager ces limites (20 req/min, 5
+    // connexions/min…) à TOUS les utilisateurs du site. `getTracker` compte
+    // désormais par IP réelle du visiteur, relayée par le site avec le
+    // secret `WEB_PROXY_SECRET` — voir `resolveClientIp`.
     ThrottlerModule.forRootAsync({
       imports: [RedisModule],
-      inject: [RedisService],
-      useFactory: (redis: RedisService) => ({
+      inject: [RedisService, ConfigService],
+      useFactory: (redis: RedisService, config: ConfigService) => ({
         throttlers: [{ name: 'default', ttl: 60_000, limit: 20 }],
         storage: new RedisThrottlerStorage(redis),
+        getTracker: (req: Record<string, unknown>) =>
+          resolveClientIp(
+            req as unknown as RequestLike,
+            config.get<string>('WEB_PROXY_SECRET'),
+          ),
       }),
     }),
     LoggerModule,

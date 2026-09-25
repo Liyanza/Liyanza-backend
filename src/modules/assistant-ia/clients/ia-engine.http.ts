@@ -23,6 +23,23 @@ import { IAEngineMock } from './ia-engine.mock';
  * joint, authentifié par le secret partagé `X-Internal-Token` (même
  * mécanisme que `InternalTokenGuard`, dans l'autre sens).
  */
+/** Durée maximale d'une réponse en flux, de la requête au dernier morceau. */
+const STREAM_TIMEOUT_MS = 120_000;
+
+function parseSseEvent(raw: string): { type: string; text?: string } | null {
+  const data = raw
+    .split('\n')
+    .filter((line) => line.startsWith('data:'))
+    .map((line) => line.slice(5).trim())
+    .join('');
+  if (!data) return null;
+  try {
+    return JSON.parse(data) as { type: string; text?: string };
+  } catch {
+    return null;
+  }
+}
+
 @Injectable()
 export class IAEngineHttpClient implements IAEngineInterface {
   private readonly logger = new Logger(IAEngineHttpClient.name);
@@ -46,13 +63,17 @@ export class IAEngineHttpClient implements IAEngineInterface {
       context: { recentMessages: params.recentMessages ?? [] },
     });
 
+  private target(): { baseUrl: string; token: string } {
+    return {
+      baseUrl: this.configService
+        .getOrThrow<string>('IA_SERVICE_URL')
+        .replace(/\/+$/, ''),
+      token: this.configService.getOrThrow<string>('IA_SERVICE_INTERNAL_TOKEN'),
+    };
+  }
+
   private async postAsk(body: object): Promise<AskQuestionResult> {
-    const baseUrl = this.configService
-      .getOrThrow<string>('IA_SERVICE_URL')
-      .replace(/\/+$/, '');
-    const token = this.configService.getOrThrow<string>(
-      'IA_SERVICE_INTERNAL_TOKEN',
-    );
+    const { baseUrl, token } = this.target();
 
     try {
       const { data } = await firstValueFrom(
@@ -70,6 +91,66 @@ export class IAEngineHttpClient implements IAEngineInterface {
     } catch (error) {
       throw this.toIAError(error);
     }
+  }
+
+  streamQuestion = (params: AskQuestionParams): AsyncIterable<string> =>
+    this.postStream(params);
+
+  streamPublicQuestion = (
+    params: AskPublicQuestionParams,
+  ): AsyncIterable<string> =>
+    this.postStream({
+      mode: 'public',
+      userMessage: params.userMessage,
+      context: { recentMessages: params.recentMessages ?? [] },
+    });
+
+  /**
+   * `POST /ask/stream` : lit le flux SSE du service chatbot et renvoie le
+   * texte de chaque événement `delta`. `fetch` natif plutôt que
+   * `HttpService` (axios) : sa lecture en flux est bien plus simple.
+   */
+  private async *postStream(body: object): AsyncGenerator<string> {
+    const { baseUrl, token } = this.target();
+    let response: Response;
+    try {
+      response = await fetch(`${baseUrl}/ask/stream`, {
+        method: 'POST',
+        headers: {
+          'X-Internal-Token': token,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(STREAM_TIMEOUT_MS),
+      });
+    } catch (error) {
+      const message = `IA service unreachable (${error instanceof Error ? error.name : 'unknown'})`;
+      this.logger.warn(message);
+      throw new Error(message);
+    }
+    if (!response.ok || !response.body) {
+      const message = `IA service responded ${response.status}`;
+      this.logger.warn(message);
+      throw new Error(message);
+    }
+
+    const decoder = new TextDecoder();
+    let buffer = '';
+    for await (const chunk of response.body as unknown as AsyncIterable<Uint8Array>) {
+      buffer += decoder.decode(chunk, { stream: true });
+      let end: number;
+      while ((end = buffer.indexOf('\n\n')) !== -1) {
+        const event = parseSseEvent(buffer.slice(0, end));
+        buffer = buffer.slice(end + 2);
+        if (!event) continue;
+        if (event.type === 'delta' && event.text) yield event.text;
+        else if (event.type === 'done') return;
+        else if (event.type === 'error') {
+          throw new Error('IA stream interrupted');
+        }
+      }
+    }
+    throw new Error('IA stream ended without completion');
   }
 
   // Le service chatbot n'expose pas (encore) de génération de

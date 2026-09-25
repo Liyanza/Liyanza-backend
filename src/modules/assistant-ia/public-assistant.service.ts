@@ -1,5 +1,4 @@
-import { createHash, timingSafeEqual } from 'crypto';
-import { isIP } from 'net';
+import { createHash } from 'crypto';
 import {
   HttpException,
   HttpStatus,
@@ -11,9 +10,11 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { Request } from 'express';
 import { RedisService } from '../redis/redis.service';
+import { resolveClientIp } from '../../common/http/client-ip.util';
 import { IA_ENGINE_TOKEN } from './clients/ia-engine.interface';
 import type { IAEngineInterface } from './clients/ia-engine.interface';
 import { PublicAskDto } from './dto/public-ask.dto';
+import type { SseEmit } from '../../common/http/sse.util';
 
 /** Questions autorisées par visiteur (IP) : rafale courte, puis par jour. */
 export const PUBLIC_LIMIT_PER_MINUTE = 3;
@@ -21,8 +22,6 @@ export const PUBLIC_LIMIT_PER_DAY = 10;
 /** Plafond global par jour (tous visiteurs), protège le quota Gemini. */
 const DEFAULT_PUBLIC_DAILY_LIMIT = 300;
 
-const VISITOR_IP_HEADER = 'x-visitor-ip';
-const WEB_PROXY_SECRET_HEADER = 'x-web-proxy-secret';
 const HISTORY_MESSAGE_MAX_LENGTH = 1_500;
 
 /**
@@ -45,49 +44,69 @@ export class PublicAssistantService {
     await this.consumeQuota(visitorIp);
 
     try {
-      const { answer } = await this.iaEngine.askPublicQuestion({
-        userMessage: dto.message,
-        recentMessages: (dto.history ?? []).map((m) => ({
-          sender: m.sender,
-          content: m.content.slice(0, HISTORY_MESSAGE_MAX_LENGTH),
-        })),
-      });
+      const { answer } = await this.iaEngine.askPublicQuestion(
+        this.toParams(dto),
+      );
       return { answer };
     } catch (error) {
-      this.logger.error(
-        `Public assistant failed: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-      throw new ServiceUnavailableException(
-        'The assistant is temporarily unavailable.',
-      );
+      throw this.unavailable(error);
     }
   }
 
   /**
-   * IP réelle du visiteur. Le site (Next.js sur Vercel) relaie les requêtes
-   * côté serveur : `req.ip` y serait l'IP de Vercel, commune à TOUS les
-   * visiteurs. Le site transmet donc l'IP du visiteur dans `X-Visitor-IP`,
-   * crue UNIQUEMENT si elle est accompagnée du secret partagé
-   * `WEB_PROXY_SECRET` — sinon n'importe qui pourrait choisir « son » IP et
-   * contourner les quotas. Sans secret valide : `req.ip`.
+   * Même question, réponse relayée morceau par morceau (`delta`) puis
+   * `{ type: 'done' }`. Les quotas sont consommés AVANT l'ouverture du flux :
+   * un 429 / 503 reste une réponse HTTP ordinaire.
    */
-  resolveVisitorIp(request: Request): string {
-    const expected = this.configService.get<string>('WEB_PROXY_SECRET');
-    const provided = request.headers[WEB_PROXY_SECRET_HEADER];
-    const visitorIp = request.headers[VISITOR_IP_HEADER];
+  async askStream(
+    dto: PublicAskDto,
+    visitorIp: string,
+    emit: SseEmit,
+  ): Promise<void> {
+    await this.consumeQuota(visitorIp);
 
-    if (
-      expected &&
-      typeof provided === 'string' &&
-      typeof visitorIp === 'string' &&
-      isIP(visitorIp) !== 0 &&
-      this.safeCompare(provided, expected)
-    ) {
-      return visitorIp;
+    let answered = false;
+    try {
+      for await (const text of this.iaEngine.streamPublicQuestion(
+        this.toParams(dto),
+      )) {
+        answered = true;
+        emit({ type: 'delta', text });
+      }
+    } catch (error) {
+      throw this.unavailable(error);
     }
-    return request.ip ?? 'unknown';
+    if (!answered) throw this.unavailable(new Error('Empty answer'));
+    emit({ type: 'done' });
+  }
+
+  private toParams(dto: PublicAskDto) {
+    return {
+      userMessage: dto.message,
+      recentMessages: (dto.history ?? []).map((m) => ({
+        sender: m.sender,
+        content: m.content.slice(0, HISTORY_MESSAGE_MAX_LENGTH),
+      })),
+    };
+  }
+
+  private unavailable(error: unknown): ServiceUnavailableException {
+    this.logger.error(
+      `Public assistant failed: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    return new ServiceUnavailableException(
+      'The assistant is temporarily unavailable.',
+    );
+  }
+
+  /** IP réelle du visiteur — voir `resolveClientIp`. */
+  resolveVisitorIp(request: Request): string {
+    return resolveClientIp(
+      request,
+      this.configService.get<string>('WEB_PROXY_SECRET'),
+    );
   }
 
   private async consumeQuota(visitorIp: string): Promise<void> {
@@ -126,11 +145,5 @@ export class PublicAssistantService {
         'The demo assistant has reached its daily limit.',
       );
     }
-  }
-
-  private safeCompare(a: string, b: string): boolean {
-    const hashA = createHash('sha256').update(a).digest();
-    const hashB = createHash('sha256').update(b).digest();
-    return timingSafeEqual(hashA, hashB);
   }
 }

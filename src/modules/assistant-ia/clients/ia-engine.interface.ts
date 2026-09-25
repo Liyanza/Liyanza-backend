@@ -89,6 +89,16 @@ export interface IAEngineInterface {
   askPublicQuestion: (
     params: AskPublicQuestionParams,
   ) => Promise<AskQuestionResult>;
+  /**
+   * Mêmes questions, réponse morceau par morceau au fil de sa génération
+   * (`POST /ask/stream` du service chatbot). Une erreur avant le premier
+   * morceau est levée au premier `next()` ; une interruption ensuite lève
+   * une erreur en cours d'itération.
+   */
+  streamQuestion: (params: AskQuestionParams) => AsyncIterable<string>;
+  streamPublicQuestion: (
+    params: AskPublicQuestionParams,
+  ) => AsyncIterable<string>;
   generateRecommendations: (
     params: GenerateRecommendationsParams,
   ) => Promise<GenerateRecommendationsResult>;

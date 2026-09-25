@@ -5,10 +5,12 @@ import {
   HttpStatus,
   Post,
   Req,
+  Res,
 } from '@nestjs/common';
 import { SkipThrottle } from '@nestjs/throttler';
 import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
-import type { Request } from 'express';
+import type { Request, Response } from 'express';
+import { streamSse } from '../../common/http/sse.util';
 import { Public } from '../auth/decorators/public.decorator';
 import { PublicAskDto } from './dto/public-ask.dto';
 import { PublicAssistantService } from './public-assistant.service';
@@ -21,10 +23,9 @@ export class PublicAssistantController {
   /**
    * Assistant vitrine du site public, sans authentification.
    *
-   * `@SkipThrottle()` : le limiteur global compte par `req.ip`, qui vaut
-   * l'IP de Vercel pour toutes les requêtes relayées par le site — il
-   * bloquerait tous les visiteurs ensemble. Les quotas sont appliqués par
-   * `PublicAssistantService`, sur l'IP réelle du visiteur.
+   * `@SkipThrottle()` : cette route a ses propres quotas, plus stricts et
+   * journaliers, appliqués par `PublicAssistantService` sur l'IP réelle du
+   * visiteur ; le limiteur global ferait double emploi.
    */
   @Post('ask')
   @Public()
@@ -38,6 +39,26 @@ export class PublicAssistantController {
     return this.publicAssistant.ask(
       dto,
       this.publicAssistant.resolveVisitorIp(request),
+    );
+  }
+
+  /** Même question, réponse relayée en Server-Sent Events (voir `askStream`). */
+  @Post('ask/stream')
+  @Public()
+  @SkipThrottle()
+  @ApiOperation({
+    summary: 'Ask the public showcase assistant, streamed (SSE)',
+  })
+  @ApiResponse({ status: 200, description: 'text/event-stream' })
+  @ApiResponse({ status: 429, description: 'Visitor quota exceeded' })
+  async askStream(
+    @Body() dto: PublicAskDto,
+    @Req() request: Request,
+    @Res() res: Response,
+  ): Promise<void> {
+    const visitorIp = this.publicAssistant.resolveVisitorIp(request);
+    await streamSse(res, (emit) =>
+      this.publicAssistant.askStream(dto, visitorIp, emit),
     );
   }
 }

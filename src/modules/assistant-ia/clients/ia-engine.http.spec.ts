@@ -119,4 +119,118 @@ describe('IAEngineHttpClient', () => {
     expect(result.recommendations.length).toBeGreaterThan(0);
     expect(post).not.toHaveBeenCalled();
   });
+
+  describe('streaming (POST /ask/stream)', () => {
+    const fetchMock = jest.fn();
+    const realFetch = global.fetch;
+
+    beforeEach(() => {
+      fetchMock.mockReset();
+      global.fetch = fetchMock;
+    });
+    afterAll(() => {
+      global.fetch = realFetch;
+    });
+
+    /** Réponse SSE découpée en paquets réseau arbitraires. */
+    const sseResponse = (chunks: string[], status = 200) =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            const encoder = new TextEncoder();
+            chunks.forEach((chunk) =>
+              controller.enqueue(encoder.encode(chunk)),
+            );
+            controller.close();
+          },
+        }),
+        { status },
+      );
+
+    const collect = async (iterable: AsyncIterable<string>) => {
+      const parts: string[] = [];
+      for await (const part of iterable) parts.push(part);
+      return parts;
+    };
+
+    it('should yield each delta, even when an event is split across network chunks', async () => {
+      fetchMock.mockResolvedValue(
+        sseResponse([
+          'data: {"type":"delta","text":"Bon"}\n\ndata: {"type":"del',
+          'ta","text":"jour à Douala"}\n\n',
+          'data: {"type":"done"}\n\n',
+        ]),
+      );
+      const client = new IAEngineHttpClient(http, configService);
+
+      await expect(collect(client.streamQuestion(params))).resolves.toEqual([
+        'Bon',
+        'jour à Douala',
+      ]);
+      const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      expect(url).toBe('https://ia.example.com/ask/stream');
+      expect(init.headers).toEqual(
+        expect.objectContaining({ 'X-Internal-Token': 'a'.repeat(64) }),
+      );
+      expect(JSON.parse(init.body as string)).toEqual(params);
+    });
+
+    it('should send public questions in "public" mode', async () => {
+      fetchMock.mockResolvedValue(
+        sseResponse([
+          'data: {"type":"delta","text":"Hi"}\n\ndata: {"type":"done"}\n\n',
+        ]),
+      );
+      const client = new IAEngineHttpClient(http, configService);
+
+      await collect(client.streamPublicQuestion({ userMessage: 'Tarifs ?' }));
+
+      const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      expect(JSON.parse(init.body as string)).toEqual({
+        mode: 'public',
+        userMessage: 'Tarifs ?',
+        context: { recentMessages: [] },
+      });
+    });
+
+    it('should fail before any text when the service answers an HTTP error', async () => {
+      fetchMock.mockResolvedValue(sseResponse([], 503));
+      const client = new IAEngineHttpClient(http, configService);
+
+      await expect(collect(client.streamQuestion(params))).rejects.toThrow(
+        'IA service responded 503',
+      );
+    });
+
+    it('should fail on an error event, and on a stream that ends without "done"', async () => {
+      const client = new IAEngineHttpClient(http, configService);
+
+      fetchMock.mockResolvedValueOnce(
+        sseResponse([
+          'data: {"type":"delta","text":"Bon"}\n\ndata: {"type":"error"}\n\n',
+        ]),
+      );
+      await expect(collect(client.streamQuestion(params))).rejects.toThrow(
+        'IA stream interrupted',
+      );
+
+      fetchMock.mockResolvedValueOnce(
+        sseResponse(['data: {"type":"delta","text":"Bon"}\n\n']),
+      );
+      await expect(collect(client.streamQuestion(params))).rejects.toThrow(
+        'IA stream ended without completion',
+      );
+    });
+
+    it('should report an unreachable service', async () => {
+      fetchMock.mockRejectedValue(
+        Object.assign(new Error('timeout'), { name: 'TimeoutError' }),
+      );
+      const client = new IAEngineHttpClient(http, configService);
+
+      await expect(collect(client.streamQuestion(params))).rejects.toThrow(
+        'IA service unreachable (TimeoutError)',
+      );
+    });
+  });
 });

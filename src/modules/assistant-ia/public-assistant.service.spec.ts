@@ -31,6 +31,8 @@ describe('PublicAssistantService', () => {
     iaEngine = {
       askQuestion: jest.fn(),
       askPublicQuestion: jest.fn().mockResolvedValue({ answer: 'Bonjour !' }),
+      streamQuestion: jest.fn(),
+      streamPublicQuestion: jest.fn(),
       generateRecommendations: jest.fn(),
     };
 
@@ -154,6 +156,58 @@ describe('PublicAssistantService', () => {
       await expect(
         service.ask({ message: 'Q' }, '1.1.1.1'),
       ).rejects.toBeInstanceOf(ServiceUnavailableException);
+    });
+  });
+
+  describe('askStream', () => {
+    async function* stream(parts: string[], failWith?: Error) {
+      for (const part of parts) {
+        await Promise.resolve();
+        yield part;
+      }
+      if (failWith) throw failWith;
+    }
+
+    it('should relay the chunks then emit "done"', async () => {
+      iaEngine.streamPublicQuestion.mockReturnValue(stream(['Bien', 'venue']));
+      const emit = jest.fn();
+
+      await service.askStream({ message: 'Bonjour' }, '1.1.1.1', emit);
+
+      expect(emit.mock.calls.map(([event]: [unknown]) => event)).toEqual([
+        { type: 'delta', text: 'Bien' },
+        { type: 'delta', text: 'venue' },
+        { type: 'done' },
+      ]);
+    });
+
+    it('should apply the quotas BEFORE opening the stream (plain 429)', async () => {
+      const emit = jest.fn();
+      for (let i = 0; i < 3; i++) {
+        iaEngine.streamPublicQuestion.mockReturnValue(stream(['ok']));
+        await service.askStream({ message: 'Q' }, '1.1.1.1', emit);
+      }
+      emit.mockClear();
+      iaEngine.streamPublicQuestion.mockClear();
+
+      const error: unknown = await service
+        .askStream({ message: 'Q' }, '1.1.1.1', emit)
+        .catch((e: unknown) => e);
+      expect((error as HttpException).getStatus()).toBe(429);
+      expect(emit).not.toHaveBeenCalled();
+      expect(iaEngine.streamPublicQuestion).not.toHaveBeenCalled();
+    });
+
+    it('should answer 503 when the IA fails before the first chunk', async () => {
+      iaEngine.streamPublicQuestion.mockReturnValue(
+        stream([], new Error('down')),
+      );
+      const emit = jest.fn();
+
+      await expect(
+        service.askStream({ message: 'Q' }, '1.1.1.1', emit),
+      ).rejects.toBeInstanceOf(ServiceUnavailableException);
+      expect(emit).not.toHaveBeenCalled();
     });
   });
 });
