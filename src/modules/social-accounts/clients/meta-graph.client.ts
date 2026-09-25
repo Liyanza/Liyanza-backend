@@ -25,6 +25,43 @@ interface MetaPageEdge {
   instagram_business_account?: { id: string };
 }
 
+interface MetaInsight {
+  name: string;
+  values?: { value: number }[];
+  total_value?: { value: number };
+}
+
+type InsightsQuery = { metric: string } & Record<string, string>;
+
+/**
+ * Métriques d'insights, de la plus récente à l'ancienne : Meta a remplacé
+ * `page_impressions` / `page_engaged_users` (Pages) et `impressions`
+ * (Instagram) par des métriques "views". Chaque liste est essayée dans
+ * l'ordre (voir `firstAvailableMetric`).
+ */
+const FACEBOOK_METRICS: Record<'impressions' | 'engagement', InsightsQuery[]> =
+  {
+    impressions: [
+      { metric: 'page_media_view', period: 'days_28' },
+      { metric: 'page_impressions', period: 'days_28' },
+    ],
+    engagement: [
+      { metric: 'page_post_engagements', period: 'days_28' },
+      { metric: 'page_engaged_users', period: 'days_28' },
+    ],
+  };
+
+const INSTAGRAM_METRICS: Record<'views' | 'reach', InsightsQuery[]> = {
+  views: [
+    { metric: 'views', period: 'day', metric_type: 'total_value' },
+    { metric: 'impressions', period: 'days_28' },
+  ],
+  reach: [
+    { metric: 'reach', period: 'days_28' },
+    { metric: 'reach', period: 'day', metric_type: 'total_value' },
+  ],
+};
+
 interface MetaErrorBody {
   error?: { message?: string; code?: number; error_subcode?: number };
 }
@@ -108,7 +145,12 @@ export class MetaGraphClient implements SocialPlatformClientInterface {
     platform: SocialPlatform,
     accessToken: string,
   ): Promise<SocialAccountProfile> {
-    const pages = { data: await this.listManagedPages(accessToken) };
+    const pages = {
+      data: await this.listManagedPages(
+        accessToken,
+        platform === SocialPlatform.INSTAGRAM,
+      ),
+    };
 
     if (platform === SocialPlatform.FACEBOOK) {
       const page = pages.data[0];
@@ -154,20 +196,29 @@ export class MetaGraphClient implements SocialPlatformClientInterface {
    * repli sur les Pages des portefeuilles de l'utilisateur (permission
    * `business_management`), en ne gardant que celles pour lesquelles Meta
    * délivre un token de Page, c.-à-d. que l'utilisateur peut réellement gérer.
+   * Pour Instagram (`needInstagram`), le repli a aussi lieu quand aucune
+   * Page directe n'a de compte Instagram : il peut être relié à une autre
+   * Page du portefeuille.
    */
-  private async listManagedPages(accessToken: string): Promise<MetaPageEdge[]> {
+  private async listManagedPages(
+    accessToken: string,
+    needInstagram = false,
+  ): Promise<MetaPageEdge[]> {
     const fields = 'id,name,access_token,instagram_business_account';
     const direct = await this.graphGet<{ data: MetaPageEdge[] }>(
       '/me/accounts',
       { fields, access_token: accessToken },
     );
-    if (direct.data.length > 0) return direct.data;
+    const directIsEnough = needInstagram
+      ? direct.data.some((page) => page.instagram_business_account)
+      : direct.data.length > 0;
+    if (directIsEnough) return direct.data;
 
     const businesses = await this.graphGet<{ data: { id: string }[] }>(
       '/me/businesses',
       { fields: 'id', access_token: accessToken },
     );
-    const pages: MetaPageEdge[] = [];
+    const pages: MetaPageEdge[] = [...direct.data];
     for (const business of businesses.data) {
       for (const edge of ['owned_pages', 'client_pages']) {
         const result = await this.graphGet<{ data: MetaPageEdge[] }>(
@@ -193,35 +244,25 @@ export class MetaGraphClient implements SocialPlatformClientInterface {
     );
     const followerCount = profileFields.followers_count;
 
-    const metrics =
-      platform === SocialPlatform.FACEBOOK
-        ? 'page_impressions,page_engaged_users'
-        : 'impressions,reach';
+    const raw: Record<string, unknown> = { profileFields };
+    const read = (candidates: InsightsQuery[]) =>
+      this.firstAvailableMetric(
+        externalAccountId,
+        accessToken,
+        candidates,
+        raw,
+      );
 
-    const insights = await this.graphGet<{
-      data: { name: string; values: { value: number }[] }[];
-    }>(`/${externalAccountId}/insights`, {
-      metric: metrics,
-      period: 'days_28',
-      access_token: accessToken,
-    });
-
-    const latestValue = (metricName: string): number | undefined => {
-      const metric = insights.data.find((m) => m.name === metricName);
-      const last = metric?.values?.at(-1);
-      return last?.value;
-    };
-
-    const impressions =
-      platform === SocialPlatform.FACEBOOK
-        ? latestValue('page_impressions')
-        : latestValue('impressions');
-    const reach =
-      platform === SocialPlatform.INSTAGRAM ? latestValue('reach') : undefined;
-    const engagedUsers =
-      platform === SocialPlatform.FACEBOOK
-        ? latestValue('page_engaged_users')
-        : undefined;
+    let impressions: number | undefined;
+    let reach: number | undefined;
+    let engagedUsers: number | undefined;
+    if (platform === SocialPlatform.FACEBOOK) {
+      impressions = await read(FACEBOOK_METRICS.impressions);
+      engagedUsers = await read(FACEBOOK_METRICS.engagement);
+    } else {
+      impressions = await read(INSTAGRAM_METRICS.views);
+      reach = await read(INSTAGRAM_METRICS.reach);
+    }
 
     // Approximation faute de métrique "taux d'engagement" directe et
     // homogène entre Facebook Pages et comptes Instagram professionnels —
@@ -232,13 +273,37 @@ export class MetaGraphClient implements SocialPlatformClientInterface {
         ? Math.round((engagementBase / followerCount) * 10000) / 100
         : undefined;
 
-    return {
-      followerCount,
-      impressions,
-      reach,
-      engagementRate,
-      raw: { profileFields, insights },
-    };
+    return { followerCount, impressions, reach, engagementRate, raw };
+  }
+
+  /**
+   * Valeur de la première métrique acceptée par Meta. Meta retire
+   * régulièrement des métriques d'insights (erreur #100 "must be a valid
+   * insights metric") : une métrique retirée est ignorée au lieu de faire
+   * échouer toute la synchronisation. Toute autre erreur (token expiré,
+   * panne) remonte.
+   */
+  private async firstAvailableMetric(
+    accountId: string,
+    accessToken: string,
+    candidates: InsightsQuery[],
+    raw: Record<string, unknown>,
+  ): Promise<number | undefined> {
+    for (const { metric, ...params } of candidates) {
+      try {
+        const insights = await this.graphGet<{ data: MetaInsight[] }>(
+          `/${accountId}/insights`,
+          { metric, ...params, access_token: accessToken },
+        );
+        raw[metric] = insights;
+        const entry = insights.data.find((m) => m.name === metric);
+        const value = entry?.total_value?.value ?? entry?.values?.at(-1)?.value;
+        if (typeof value === 'number') return value;
+      } catch (error) {
+        if (!(error instanceof MetaApiError) || error.code !== 100) throw error;
+      }
+    }
+    return undefined;
   }
 
   private async graphGet<T>(
