@@ -3,22 +3,31 @@ import {
   NotFoundException,
   ForbiddenException,
   InternalServerErrorException,
+  BadRequestException,
   Inject,
   Logger,
 } from '@nestjs/common';
+import { AiConversation } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { assertSameCompany } from '../auth/utils/company-scope.util';
 import { CreateConversationDto } from './dto/create-conversation.dto';
 import { EnvoyerMessageDto } from './dto/envoyer-message.dto';
+import { UpdateConversationDto } from './dto/update-conversation.dto';
+import { MessageFeedbackDto } from './dto/message-feedback.dto';
+import { RegenererReponseDto } from './dto/regenerer-reponse.dto';
 import { IA_ENGINE_TOKEN } from './clients/ia-engine.interface';
 import type {
   AskQuestionContext,
+  CampaignContext,
   IAEngineInterface,
 } from './clients/ia-engine.interface';
 
 /** Nombre maximal de messages renvoyés par `getConversation`. */
 const MAX_CONVERSATION_MESSAGES = 200;
+
+/** Nombre maximal de conversations listées dans l'historique du Copilot. */
+const MAX_LISTED_CONVERSATIONS = 100;
 
 /**
  * Historique transmis au moteur IA pour qu'il suive le fil de la
@@ -29,6 +38,17 @@ const MAX_CONVERSATION_MESSAGES = 200;
 const IA_CONTEXT_MESSAGES = 10;
 const IA_CONTEXT_MESSAGE_MAX_LENGTH = 1_500;
 
+/** Indicateurs (`Statistic`) transmis au plus pour une campagne. */
+const IA_CONTEXT_CAMPAIGN_STATISTICS = 50;
+
+/**
+ * Conversations de l'assistant IA (Copilot du dashboard).
+ *
+ * Une conversation est PERSONNELLE : seul son auteur peut la lire, la
+ * poursuivre, la renommer ou la supprimer (`loadOwnConversation`), en plus de
+ * l'isolation multi-tenant habituelle. Un collègue de la même entreprise
+ * reçoit un 404, comme pour une ressource d'une autre entreprise.
+ */
 @Injectable()
 export class AssistantIService {
   private readonly logger = new Logger(AssistantIService.name);
@@ -39,7 +59,7 @@ export class AssistantIService {
   ) {}
 
   // --------------------------------------------------------------
-  // 1. Create a conversation
+  // 1. Conversations : création, liste, lecture, renommage, suppression
   // --------------------------------------------------------------
   async createConversation(
     dto: CreateConversationDto,
@@ -51,9 +71,11 @@ export class AssistantIService {
       );
     }
 
+    const now = new Date();
     return this.prisma.aiConversation.create({
       data: {
-        startedAt: new Date(),
+        startedAt: now,
+        lastMessageAt: now,
         topic: dto.topic,
         companyId: user.companyId,
         createdById: user.userId,
@@ -61,63 +83,91 @@ export class AssistantIService {
     });
   }
 
+  /** Historique du Copilot : les conversations de l'utilisateur, les plus récentes d'abord. */
+  async listConversations(user: AuthenticatedUser) {
+    if (!user.companyId) {
+      return [];
+    }
+    return this.prisma.aiConversation.findMany({
+      where: { createdById: user.userId, companyId: user.companyId },
+      orderBy: { lastMessageAt: 'desc' },
+      take: MAX_LISTED_CONVERSATIONS,
+      select: { id: true, topic: true, startedAt: true, lastMessageAt: true },
+    });
+  }
+
+  async getConversation(conversationId: string, user: AuthenticatedUser) {
+    await this.loadOwnConversation(conversationId, user);
+
+    // CORRECTIF AUDIT (majeur — DoS) : `messages` était chargé sans aucune
+    // borne. On borne aux 200 derniers messages, renvoyés dans l'ordre
+    // chronologique attendu par le client.
+    const conversation = await this.prisma.aiConversation.findUnique({
+      where: { id: conversationId },
+      include: {
+        messages: {
+          orderBy: { sentAt: 'desc' },
+          take: MAX_CONVERSATION_MESSAGES,
+        },
+      },
+    });
+    if (!conversation) {
+      throw new NotFoundException('Conversation not found.');
+    }
+
+    // `take` impose un tri décroissant pour récupérer les plus récents ;
+    // le client attend l'ordre chronologique.
+    return {
+      ...conversation,
+      messages: [...conversation.messages].reverse(),
+    };
+  }
+
+  async renameConversation(
+    conversationId: string,
+    dto: UpdateConversationDto,
+    user: AuthenticatedUser,
+  ) {
+    await this.loadOwnConversation(conversationId, user);
+    return this.prisma.aiConversation.update({
+      where: { id: conversationId },
+      data: { topic: dto.topic },
+      select: { id: true, topic: true, startedAt: true, lastMessageAt: true },
+    });
+  }
+
+  async deleteConversation(conversationId: string, user: AuthenticatedUser) {
+    await this.loadOwnConversation(conversationId, user);
+    // Les messages d'abord (FK RESTRICT). Une `Recommendation` issue d'un
+    // message garde son contenu : sa référence passe à NULL (FK SET NULL).
+    await this.prisma.$transaction([
+      this.prisma.aiMessage.deleteMany({ where: { conversationId } }),
+      this.prisma.aiConversation.delete({ where: { id: conversationId } }),
+    ]);
+  }
+
   // --------------------------------------------------------------
-  // 2. Send a message (user + IA response)
+  // 2. Messages : envoi, régénération, avis
   // --------------------------------------------------------------
   async envoyerMessage(
     conversationId: string,
     dto: EnvoyerMessageDto,
     user: AuthenticatedUser,
   ) {
-    // Fetch conversation with companyId
-    const conversation = await this.prisma.aiConversation.findUnique({
-      where: { id: conversationId },
-    });
-    if (!conversation) {
-      throw new NotFoundException('Conversation not found.');
-    }
-    // Multi-tenant isolation: the conversation must belong to the same company
-    // NOTE: the `as string | null` cast below is a temporary stop-gap for
-    // when the generated Prisma Client is out of sync with schema.prisma
-    // (run `npx prisma generate` + restart the TS server, then this cast
-    // can be removed since `companyId` will be properly typed again).
-    assertSameCompany(user, conversation.companyId, 'Conversation');
+    const conversation = await this.loadOwnConversation(conversationId, user);
 
     const context = await this.buildIAContext(
-      conversation.id,
-      conversation.topic,
+      conversation,
       user.companyId,
+      dto.campaignId,
     );
-
-    // Call IA engine
-    let iaResponse: string;
-    try {
-      const result = await this.iaEngine.askQuestion({
-        conversationId,
-        userMessage: dto.content,
-        context,
-      });
-      iaResponse = result.answer;
-    } catch (error) {
-      this.logger.error(
-        `IA engine failed for conversation ${conversationId}: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-      throw new InternalServerErrorException(
-        'Failed to get response from AI engine. Please try again later.',
-      );
-    }
+    const iaResponse = await this.askIA(conversation.id, dto.content, context);
 
     // Persist both messages (user + IA) atomically.
     //
-    // CORRECTIF AUDIT (majeur) : la version précédente appelait
-    // `this.prisma.$transaction(async () => { this.prisma.aiMessage.create(...) })`
-    // en ignorant le client transactionnel `tx` fourni par Prisma, et en
-    // réutilisant `this.prisma` (le client racine, hors transaction) à
-    // l'intérieur du callback. Résultat : aucune atomicité réelle — si la
-    // seconde écriture échouait, la première restait committée sans rollback.
-    // Le callback DOIT utiliser le client `tx` reçu en paramètre.
+    // CORRECTIF AUDIT (majeur) : le callback DOIT utiliser le client
+    // transactionnel `tx` reçu en paramètre, jamais `this.prisma`, sinon
+    // aucune atomicité réelle.
     const [userMessage, iaMessage] = await this.prisma.$transaction(
       async (tx) => {
         const userMessage = await tx.aiMessage.create({
@@ -136,6 +186,10 @@ export class AssistantIService {
             conversationId: conversation.id,
           },
         });
+        await tx.aiConversation.update({
+          where: { id: conversation.id },
+          data: { lastMessageAt: iaMessage.sentAt },
+        });
         return [userMessage, iaMessage] as const;
       },
     );
@@ -147,17 +201,137 @@ export class AssistantIService {
   }
 
   /**
-   * Profil de l'entreprise + derniers échanges, lus AVANT d'enregistrer le
-   * nouveau message (il est déjà transmis dans `userMessage`). Toujours
-   * limités à l'entreprise de l'utilisateur : `assertSameCompany` a été
-   * vérifié par l'appelant.
+   * Remplace la DERNIÈRE réponse de l'IA par une nouvelle réponse à la même
+   * question (bouton « Régénérer »). Seule la dernière réponse est
+   * régénérable : en régénérer une plus ancienne rendrait incohérente la
+   * suite de la conversation.
+   */
+  async regenererDerniereReponse(
+    conversationId: string,
+    dto: RegenererReponseDto,
+    user: AuthenticatedUser,
+  ) {
+    const conversation = await this.loadOwnConversation(conversationId, user);
+
+    const [lastAnswer, lastQuestion] = await this.prisma.aiMessage.findMany({
+      where: { conversationId },
+      orderBy: { sentAt: 'desc' },
+      take: 2,
+    });
+    if (lastAnswer?.sender !== 'AI' || lastQuestion?.sender !== 'USER') {
+      throw new BadRequestException('Nothing to regenerate.');
+    }
+
+    const context = await this.buildIAContext(
+      conversation,
+      user.companyId,
+      dto.campaignId,
+      lastQuestion.sentAt,
+    );
+    const iaResponse = await this.askIA(
+      conversation.id,
+      lastQuestion.content,
+      context,
+    );
+
+    return this.prisma.$transaction(async (tx) => {
+      const iaMessage = await tx.aiMessage.update({
+        where: { id: lastAnswer.id },
+        data: { content: iaResponse, sentAt: new Date(), feedback: null },
+      });
+      await tx.aiConversation.update({
+        where: { id: conversation.id },
+        data: { lastMessageAt: iaMessage.sentAt },
+      });
+      return iaMessage;
+    });
+  }
+
+  async setMessageFeedback(
+    conversationId: string,
+    messageId: string,
+    dto: MessageFeedbackDto,
+    user: AuthenticatedUser,
+  ) {
+    await this.loadOwnConversation(conversationId, user);
+    const message = await this.prisma.aiMessage.findFirst({
+      where: { id: messageId, conversationId, sender: 'AI' },
+      select: { id: true },
+    });
+    if (!message) {
+      throw new NotFoundException('Message not found.');
+    }
+    return this.prisma.aiMessage.update({
+      where: { id: message.id },
+      data: { feedback: dto.value ?? null },
+      select: { id: true, feedback: true },
+    });
+  }
+
+  // --------------------------------------------------------------
+  // 3. Helpers
+  // --------------------------------------------------------------
+
+  /**
+   * Charge une conversation en vérifiant l'entreprise ET l'auteur. Dans les
+   * deux cas d'échec : 404, pour ne pas révéler qu'elle existe.
+   */
+  private async loadOwnConversation(
+    conversationId: string,
+    user: AuthenticatedUser,
+  ): Promise<AiConversation> {
+    const conversation = await this.prisma.aiConversation.findUnique({
+      where: { id: conversationId },
+    });
+    if (!conversation) {
+      throw new NotFoundException('Conversation not found.');
+    }
+    assertSameCompany(user, conversation.companyId, 'Conversation');
+    if (conversation.createdById !== user.userId) {
+      throw new NotFoundException('Conversation not found.');
+    }
+    return conversation;
+  }
+
+  private async askIA(
+    conversationId: string,
+    userMessage: string,
+    context: AskQuestionContext,
+  ): Promise<string> {
+    try {
+      const result = await this.iaEngine.askQuestion({
+        conversationId,
+        userMessage,
+        context,
+      });
+      return result.answer;
+    } catch (error) {
+      this.logger.error(
+        `IA engine failed for conversation ${conversationId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      throw new InternalServerErrorException(
+        'Failed to get response from AI engine. Please try again later.',
+      );
+    }
+  }
+
+  /**
+   * Profil de l'entreprise, derniers échanges et, depuis le Copilot, la
+   * campagne affichée. Toujours limités à l'entreprise de l'utilisateur :
+   * `loadOwnConversation` a été vérifié par l'appelant.
+   *
+   * `before` : ne reprendre que les messages antérieurs (régénération — la
+   * question régénérée ne doit pas figurer aussi dans l'historique).
    */
   private async buildIAContext(
-    conversationId: string,
-    topic: string,
+    conversation: AiConversation,
     companyId: string | null,
+    campaignId?: string,
+    before?: Date,
   ): Promise<AskQuestionContext> {
-    const [company, lastMessages] = await Promise.all([
+    const [company, lastMessages, campaign] = await Promise.all([
       companyId
         ? this.prisma.company.findUnique({
             where: { id: companyId },
@@ -165,11 +339,15 @@ export class AssistantIService {
           })
         : null,
       this.prisma.aiMessage.findMany({
-        where: { conversationId },
+        where: {
+          conversationId: conversation.id,
+          ...(before && { sentAt: { lt: before } }),
+        },
         orderBy: { sentAt: 'desc' },
         take: IA_CONTEXT_MESSAGES,
         select: { sender: true, content: true },
       }),
+      campaignId ? this.buildCampaignContext(campaignId, companyId) : null,
     ]);
 
     const recentMessages = lastMessages
@@ -184,47 +362,77 @@ export class AssistantIService {
       }));
 
     return {
-      topic,
+      topic: conversation.topic,
       ...(company && { companyProfile: company }),
+      ...(campaign && { campaign }),
       ...(recentMessages.length > 0 && { recentMessages }),
     };
   }
 
-  // --------------------------------------------------------------
-  // 3. Get conversation history
-  // --------------------------------------------------------------
-  async getConversation(conversationId: string, user: AuthenticatedUser) {
-    // CORRECTIF AUDIT (majeur — DoS) : `messages` était chargé sans aucune
-    // borne. Une conversation longue (chaque échange produisant deux
-    // `AiMessage` de 5 000 caractères — cf. `EnvoyerMessageDto`) était
-    // intégralement matérialisée en mémoire puis sérialisée en JSON à chaque
-    // consultation. Quelques milliers de messages suffisent à saturer le heap
-    // d'une tâche Fargate. On borne aux 200 derniers messages, renvoyés dans
-    // l'ordre chronologique attendu par le client.
-    const conversation = await this.prisma.aiConversation.findUnique({
-      where: { id: conversationId },
-      include: {
-        messages: {
-          orderBy: { sentAt: 'desc' },
-          take: MAX_CONVERSATION_MESSAGES,
-        },
-      },
-    });
-    if (!conversation) {
-      throw new NotFoundException('Conversation not found.');
+  private async buildCampaignContext(
+    campaignId: string,
+    companyId: string | null,
+  ): Promise<CampaignContext> {
+    const campaign = companyId
+      ? await this.prisma.campaign.findFirst({
+          where: { id: campaignId, launchedBy: { companyId } },
+          select: {
+            name: true,
+            objective: true,
+            status: true,
+            plannedBudget: true,
+            startDate: true,
+            endDate: true,
+            channels: { select: { radio: true, poster: true, flyer: true } },
+            digitalDetails: {
+              select: { channels: { select: { platform: true } } },
+            },
+            statistics: {
+              orderBy: { computedAt: 'desc' },
+              take: IA_CONTEXT_CAMPAIGN_STATISTICS,
+              select: { indicator: true, value: true },
+            },
+          },
+        })
+      : null;
+    if (!campaign) {
+      throw new NotFoundException('Campaign not found.');
     }
-    assertSameCompany(user, conversation.companyId, 'Conversation');
 
-    // `take` impose un tri décroissant pour récupérer les plus récents ;
-    // le client attend l'ordre chronologique.
+    const channels = new Set<string>();
+    for (const channel of campaign.channels) {
+      if (channel.radio) channels.add('Radio');
+      if (channel.poster) channels.add('Affichage');
+      if (channel.flyer) channels.add('Flyers');
+    }
+    for (const channel of campaign.digitalDetails?.channels ?? []) {
+      channels.add(channel.platform);
+    }
+
+    // Statistiques triées de la plus récente à la plus ancienne : on garde
+    // la dernière valeur connue de chaque indicateur.
+    const results: Record<string, number> = {};
+    for (const stat of campaign.statistics) {
+      if (!(stat.indicator in results)) {
+        results[stat.indicator] = stat.value;
+      }
+    }
+
+    const toDay = (date: Date) => date.toISOString().slice(0, 10);
     return {
-      ...conversation,
-      messages: [...conversation.messages].reverse(),
+      name: campaign.name,
+      objective: campaign.objective,
+      status: campaign.status,
+      plannedBudget: campaign.plannedBudget.toNumber(),
+      startDate: toDay(campaign.startDate),
+      endDate: toDay(campaign.endDate),
+      channels: [...channels],
+      results,
     };
   }
 
   // --------------------------------------------------------------
-  // 4. List recommendations for a campaign
+  // 4. Recommandations : liste pour une campagne
   // --------------------------------------------------------------
   async getRecommandations(campaignId: string, user: AuthenticatedUser) {
     // Verify campaign access
@@ -247,7 +455,7 @@ export class AssistantIService {
   }
 
   // --------------------------------------------------------------
-  // 5. Generate recommendations via IA engine
+  // 5. Recommandations : génération via le moteur IA
   // --------------------------------------------------------------
   async genererRecommandations(campaignId: string, user: AuthenticatedUser) {
     // Verify campaign access

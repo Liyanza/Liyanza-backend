@@ -5,6 +5,7 @@ import { firstValueFrom } from 'rxjs';
 import { AxiosError } from 'axios';
 import { IAEngineInterface } from './ia-engine.interface';
 import type {
+  AskPublicQuestionParams,
   AskQuestionParams,
   AskQuestionResult,
   GenerateRecommendationsParams,
@@ -32,9 +33,20 @@ export class IAEngineHttpClient implements IAEngineInterface {
     private readonly configService: ConfigService,
   ) {}
 
-  askQuestion = async (
-    params: AskQuestionParams,
-  ): Promise<AskQuestionResult> => {
+  askQuestion = (params: AskQuestionParams): Promise<AskQuestionResult> =>
+    this.postAsk(params);
+
+  /** Mode vitrine du service chatbot : voir `AskPublicQuestionParams`. */
+  askPublicQuestion = (
+    params: AskPublicQuestionParams,
+  ): Promise<AskQuestionResult> =>
+    this.postAsk({
+      mode: 'public',
+      userMessage: params.userMessage,
+      context: { recentMessages: params.recentMessages ?? [] },
+    });
+
+  private async postAsk(body: object): Promise<AskQuestionResult> {
     const baseUrl = this.configService
       .getOrThrow<string>('IA_SERVICE_URL')
       .replace(/\/+$/, '');
@@ -44,7 +56,7 @@ export class IAEngineHttpClient implements IAEngineInterface {
 
     try {
       const { data } = await firstValueFrom(
-        this.http.post<AskQuestionResult>(`${baseUrl}/ask`, params, {
+        this.http.post<AskQuestionResult>(`${baseUrl}/ask`, body, {
           headers: {
             'X-Internal-Token': token,
             'Content-Type': 'application/json',
@@ -58,7 +70,7 @@ export class IAEngineHttpClient implements IAEngineInterface {
     } catch (error) {
       throw this.toIAError(error);
     }
-  };
+  }
 
   // Le service chatbot n'expose pas (encore) de génération de
   // recommandations : on garde le comportement du mock pour cette méthode

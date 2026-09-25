@@ -113,7 +113,7 @@ model User {
   // via OAuth n'a jamais de mot de passe local. `AuthService.login()` gère
   // déjà ce cas nativement (compare contre un hash leurre si `null`, voir
   // DUMMY_BCRYPT_HASH) — aucune régression sur le login par mot de passe.
-  password String?
+  password      String?
   // Nullable pour la même raison : un profil Google/Facebook ne fournit
   // jamais de numéro de téléphone. Colonne non consommée pour l'envoi de
   // notifications (SMS non implémenté) — vérifié avant ce changement.
@@ -317,24 +317,35 @@ model SimulationAnswer {
 
 /// Entité CONVERSATION_IA
 model AiConversation {
-  id          String   @id @default(cuid())
-  startedAt   DateTime
-  topic       String
-  companyId   String?
-  createdById String?
+  id            String   @id @default(cuid())
+  startedAt     DateTime
+  topic         String
+  companyId     String?
+  createdById   String?
+  /// Mis à jour à chaque échange : tri de l'historique du Copilot.
+  lastMessageAt DateTime @default(now())
 
   company   Company? @relation(fields: [companyId], references: [id])
   createdBy User?    @relation(fields: [createdById], references: [id])
 
   messages AiMessage[]
+
+  @@index([createdById, lastMessageAt])
+}
+
+enum AiMessageFeedback {
+  UP
+  DOWN
 }
 
 /// Entité MESSAGE_IA
 model AiMessage {
-  id      String   @id @default(cuid())
-  content String   @db.Text
-  sender  String
-  sentAt  DateTime
+  id       String             @id @default(cuid())
+  content  String             @db.Text
+  sender   String
+  sentAt   DateTime
+  /// Avis de l'utilisateur sur une réponse de l'IA (👍/👎 du Copilot).
+  feedback AiMessageFeedback?
 
   conversationId String
   conversation   AiConversation @relation(fields: [conversationId], references: [id])
@@ -632,7 +643,7 @@ model DigitalSimulation {
   conversionRate     Float?
 
   /// DigitalSimulationScenarioSnapshot[] — un par scénario comparé (A/B/C).
-  scenarios Json @default("[]")
+  scenarios        Json @default("[]")
   /// DigitalSimulationChannelSnapshot[] — détail du scénario recommandé,
   /// un par canal réellement sélectionné (jamais WhatsApp/TikTok/YouTube,
   /// non intégrés — voir DigitalCampaignsService.buildSimulationExtras).
@@ -640,7 +651,7 @@ model DigitalSimulation {
   /// DigitalSimulationWeekSnapshot[] — évolution hebdomadaire du scénario
   /// recommandé, sur la durée de la campagne (5 semaines max, voir
   /// DigitalCampaignsService.buildSimulationExtras).
-  weeklySeries Json @default("[]")
+  weeklySeries     Json @default("[]")
 
   campaignId String
   campaign   Campaign @relation(fields: [campaignId], references: [id])
