@@ -10,6 +10,9 @@ import { QueueModule } from '../queue/queue.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { MetaGraphClient } from './clients/meta-graph.client';
 import { MetaAdsClient } from './clients/meta-ads.client';
+import { MetaPageClient } from './clients/meta-page.client';
+import { PageHealthAnalysisClient } from './clients/page-health-analysis.client';
+import { PageHealthService } from './page-health/page-health.service';
 import { SOCIAL_PLATFORM_CLIENT_TOKEN } from './clients/social-platform-client.interface';
 
 @Module({
@@ -26,6 +29,9 @@ import { SOCIAL_PLATFORM_CLIENT_TOKEN } from './clients/social-platform-client.i
     SocialAccountsSchedulerService,
     SocialMetricsSyncProcessor,
     MetaAdsClient,
+    MetaPageClient,
+    PageHealthAnalysisClient,
+    PageHealthService,
     {
       provide: SOCIAL_PLATFORM_CLIENT_TOKEN,
       useClass: MetaGraphClient,
