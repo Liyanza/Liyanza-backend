@@ -9,8 +9,11 @@ import {
   Request,
   HttpCode,
   HttpStatus,
+  Res,
 } from '@nestjs/common';
 import { Request as ExpressRequest } from 'express';
+import type { Response } from 'express';
+import { streamSse } from '../../common/http/sse.util';
 import { Role } from '@prisma/client';
 import {
   ApiBearerAuth,
@@ -124,6 +127,33 @@ export class AssistantIController {
     @Request() req: AuthenticatedRequest,
   ) {
     return this.assistantService.envoyerMessage(conversationId, dto, req.user);
+  }
+
+  /**
+   * Same exchange as `POST /conversations/:id/messages`, streamed as
+   * Server-Sent Events: `{ type: 'delta', text }` while the IA writes, then
+   * `{ type: 'done', userMessage, iaMessage }` once both are persisted, or
+   * `{ type: 'error' }` if the stream breaks (nothing is persisted then).
+   * Errors before the first chunk keep their usual HTTP status.
+   */
+  @Post('conversations/:id/messages/stream')
+  @Roles(...COPILOT_ROLES)
+  @ApiOperation({ summary: 'Send a message and stream the AI reply (SSE)' })
+  @ApiResponse({ status: 200, description: 'text/event-stream' })
+  async envoyerMessageStream(
+    @Param('id') conversationId: string,
+    @Body() dto: EnvoyerMessageDto,
+    @Request() req: AuthenticatedRequest,
+    @Res() res: Response,
+  ): Promise<void> {
+    await streamSse(res, (emit) =>
+      this.assistantService.envoyerMessageStream(
+        conversationId,
+        dto,
+        req.user,
+        emit,
+      ),
+    );
   }
 
   @Post('conversations/:id/regenerate')

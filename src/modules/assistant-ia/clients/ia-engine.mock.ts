@@ -26,6 +26,18 @@ export class IAEngineMock implements IAEngineInterface {
     };
   }
 
+  async *streamQuestion(params: AskQuestionParams): AsyncGenerator<string> {
+    const { answer } = await this.askQuestion(params);
+    yield* answer.split(/(?<=s)/);
+  }
+
+  async *streamPublicQuestion(
+    params: AskPublicQuestionParams,
+  ): AsyncGenerator<string> {
+    const { answer } = await this.askPublicQuestion(params);
+    yield* answer.split(/(?<=s)/);
+  }
+
   async generateRecommendations(
     params: GenerateRecommendationsParams,
   ): Promise<GenerateRecommendationsResult> {

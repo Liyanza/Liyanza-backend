@@ -17,6 +17,7 @@ import { UpdateConversationDto } from './dto/update-conversation.dto';
 import { MessageFeedbackDto } from './dto/message-feedback.dto';
 import { RegenererReponseDto } from './dto/regenerer-reponse.dto';
 import { IA_ENGINE_TOKEN } from './clients/ia-engine.interface';
+import type { SseEmit } from '../../common/http/sse.util';
 import type {
   AskQuestionContext,
   CampaignContext,
@@ -162,32 +163,96 @@ export class AssistantIService {
       dto.campaignId,
     );
     const iaResponse = await this.askIA(conversation.id, dto.content, context);
+    return this.persistExchange(conversation.id, dto.content, iaResponse);
+  }
 
-    // Persist both messages (user + IA) atomically.
-    //
-    // CORRECTIF AUDIT (majeur) : le callback DOIT utiliser le client
-    // transactionnel `tx` reçu en paramètre, jamais `this.prisma`, sinon
-    // aucune atomicité réelle.
+  /**
+   * Même échange qu'`envoyerMessage`, mais la réponse de l'IA est relayée
+   * morceau par morceau (`{ type: 'delta', text }`) au fil de sa génération.
+   * Les deux messages ne sont enregistrés qu'une fois la réponse complète,
+   * puis renvoyés dans l'événement final `{ type: 'done', userMessage,
+   * iaMessage }`. Une réponse interrompue n'est jamais enregistrée.
+   */
+  async envoyerMessageStream(
+    conversationId: string,
+    dto: EnvoyerMessageDto,
+    user: AuthenticatedUser,
+    emit: SseEmit,
+  ): Promise<void> {
+    const conversation = await this.loadOwnConversation(conversationId, user);
+    const context = await this.buildIAContext(
+      conversation,
+      user.companyId,
+      dto.campaignId,
+    );
+
+    let answer = '';
+    try {
+      for await (const text of this.iaEngine.streamQuestion({
+        conversationId: conversation.id,
+        userMessage: dto.content,
+        context,
+      })) {
+        answer += text;
+        emit({ type: 'delta', text });
+      }
+    } catch (error) {
+      this.logger.error(
+        `IA stream failed for conversation ${conversation.id}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      throw new InternalServerErrorException(
+        'Failed to get response from AI engine. Please try again later.',
+      );
+    }
+    if (!answer) {
+      throw new InternalServerErrorException(
+        'Failed to get response from AI engine. Please try again later.',
+      );
+    }
+
+    const { userMessage, iaMessage } = await this.persistExchange(
+      conversation.id,
+      dto.content,
+      answer,
+    );
+    emit({ type: 'done', userMessage, iaMessage });
+  }
+
+  /**
+   * Enregistre la question et la réponse, atomiquement, et avance
+   * `lastMessageAt` (tri de l'historique).
+   *
+   * CORRECTIF AUDIT (majeur) : le callback DOIT utiliser le client
+   * transactionnel `tx` reçu en paramètre, jamais `this.prisma`, sinon
+   * aucune atomicité réelle.
+   */
+  private async persistExchange(
+    conversationId: string,
+    question: string,
+    answer: string,
+  ) {
     const [userMessage, iaMessage] = await this.prisma.$transaction(
       async (tx) => {
         const userMessage = await tx.aiMessage.create({
           data: {
-            content: dto.content,
+            content: question,
             sender: 'USER',
             sentAt: new Date(),
-            conversationId: conversation.id,
+            conversationId,
           },
         });
         const iaMessage = await tx.aiMessage.create({
           data: {
-            content: iaResponse,
+            content: answer,
             sender: 'AI',
             sentAt: new Date(),
-            conversationId: conversation.id,
+            conversationId,
           },
         });
         await tx.aiConversation.update({
-          where: { id: conversation.id },
+          where: { id: conversationId },
           data: { lastMessageAt: iaMessage.sentAt },
         });
         return [userMessage, iaMessage] as const;
