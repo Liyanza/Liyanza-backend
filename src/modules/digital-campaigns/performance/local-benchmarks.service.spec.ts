@@ -4,8 +4,6 @@ import {
   normalizeCity,
 } from './local-benchmarks.service';
 import type { PrismaService } from '../../prisma/prisma.service';
-import type { SocialAccountsService } from '../../social-accounts/social-accounts.service';
-import type { MetaAdsClient } from '../../social-accounts/clients/meta-ads.client';
 
 /** Observation : 10 000 FCFA, 5 000 impressions (CPM 2 000), 50 clics (CTR 1 %). */
 const obs = (companyId: string, city: string | null, overrides = {}) => ({
@@ -22,10 +20,7 @@ describe('LocalBenchmarksService', () => {
   let prisma: {
     adPerformanceObservation: { findMany: jest.Mock; upsert: jest.Mock };
     company: { findUnique: jest.Mock };
-    digitalCampaignDetails: { findMany: jest.Mock };
   };
-  let socialAccounts: { getAdsAccessToken: jest.Mock };
-  let metaAds: { getCampaignInsights: jest.Mock };
   let service: LocalBenchmarksService;
 
   beforeEach(() => {
@@ -34,17 +29,8 @@ describe('LocalBenchmarksService', () => {
       company: {
         findUnique: jest.fn().mockResolvedValue({ businessSector: 'Services' }),
       },
-      digitalCampaignDetails: { findMany: jest.fn() },
     };
-    socialAccounts = {
-      getAdsAccessToken: jest.fn().mockResolvedValue('token'),
-    };
-    metaAds = { getCampaignInsights: jest.fn() };
-    service = new LocalBenchmarksService(
-      prisma as unknown as PrismaService,
-      socialAccounts as unknown as SocialAccountsService,
-      metaAds as unknown as MetaAdsClient,
-    );
+    service = new LocalBenchmarksService(prisma as unknown as PrismaService);
   });
 
   it('should normalize city names', () => {
@@ -172,46 +158,5 @@ describe('LocalBenchmarksService', () => {
       await service.record({ ...base, totals: null });
       expect(prisma.adPerformanceObservation.upsert).not.toHaveBeenCalled();
     });
-  });
-
-  it('should collect every linked campaign nightly and survive one failure', async () => {
-    prisma.digitalCampaignDetails.findMany.mockResolvedValue([
-      {
-        objective: DigitalObjective.LEADS,
-        targetLocations: ['Douala'],
-        metaCampaignId: '1',
-        metaAdCurrency: 'XAF',
-        campaign: { id: 'c1', launchedBy: { companyId: 'me' } },
-      },
-      {
-        objective: DigitalObjective.LEADS,
-        targetLocations: ['Douala'],
-        metaCampaignId: '2',
-        metaAdCurrency: 'XAF',
-        campaign: { id: 'c2', launchedBy: { companyId: 'me' } },
-      },
-    ]);
-    metaAds.getCampaignInsights
-      .mockRejectedValueOnce(new Error('campaign deleted'))
-      .mockResolvedValueOnce({
-        totals: {
-          date_start: '2026-09-01',
-          date_stop: '2026-09-20',
-          spend: '25000',
-          impressions: '12000',
-          reach: '8000',
-          inline_link_clicks: '140',
-        },
-        daily: [],
-      });
-
-    await service.collectAll();
-
-    // Un seul token demandé pour l'entreprise, la 2e campagne enregistrée.
-    expect(socialAccounts.getAdsAccessToken).toHaveBeenCalledTimes(1);
-    expect(prisma.adPerformanceObservation.upsert).toHaveBeenCalledTimes(1);
-    expect(prisma.adPerformanceObservation.upsert).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { campaignId: 'c2' } }),
-    );
   });
 });

@@ -8,6 +8,8 @@ import { DIGITAL_SIMULATION_ENGINE_TOKEN } from './clients/digital-simulation-en
 import { SimulationAnalysisClient } from './clients/simulation-analysis.client';
 import { CampaignPerformanceService } from './performance/campaign-performance.service';
 import { LocalBenchmarksService } from './performance/local-benchmarks.service';
+import { CampaignAlertsService } from './performance/campaign-alerts.service';
+import { NotificationsModule } from '../notifications/notifications.module';
 import { RedisModule } from '../redis/redis.module';
 import { SocialAccountsModule } from '../social-accounts/social-accounts.module';
 
@@ -18,6 +20,7 @@ import { SocialAccountsModule } from '../social-accounts/social-accounts.module'
     PrismaModule,
     RedisModule,
     SocialAccountsModule,
+    NotificationsModule,
     HttpModule.register({ timeout: 45_000 }),
   ],
   controllers: [DigitalCampaignsController],
@@ -25,6 +28,7 @@ import { SocialAccountsModule } from '../social-accounts/social-accounts.module'
     DigitalCampaignsService,
     CampaignPerformanceService,
     LocalBenchmarksService,
+    CampaignAlertsService,
     SimulationAnalysisClient,
     {
       provide: DIGITAL_SIMULATION_ENGINE_TOKEN,
