@@ -21,7 +21,14 @@ import {
   SimulationAnalysisClient,
   type SimulationAnalysis,
 } from './clients/simulation-analysis.client';
-import { Campaign, CampaignStatus, CampaignType, Prisma } from '@prisma/client';
+import {
+  Campaign,
+  CampaignStatus,
+  CampaignType,
+  Prisma,
+  SocialAccountStatus,
+  SocialPlatform,
+} from '@prisma/client';
 
 @Injectable()
 export class DigitalCampaignsService {
@@ -152,25 +159,38 @@ export class DigitalCampaignsService {
       }
     }
 
+    // Canal sans compte précisé (cas du site et de l'app) : on lui rattache
+    // le compte ACTIF de l'entreprise pour cette plateforme, sans quoi la
+    // simulation ignorerait les métriques réelles de la Page déjà liée.
+    const activeAccounts = dto.channels.some((c) => !c.socialAccountId)
+      ? await this.activeAccountsByPlatform(user.companyId!)
+      : new Map<SocialPlatform, { id: string }>();
+
     const channels = await this.prisma.$transaction(
-      dto.channels.map((channel) =>
-        this.prisma.digitalCampaignChannel.upsert({
-          where: {
-            digitalCampaignDetailsId_platform: {
+      dto.channels
+        .map((channel) => ({
+          ...channel,
+          socialAccountId:
+            channel.socialAccountId ?? activeAccounts.get(channel.platform)?.id,
+        }))
+        .map((channel) =>
+          this.prisma.digitalCampaignChannel.upsert({
+            where: {
+              digitalCampaignDetailsId_platform: {
+                digitalCampaignDetailsId: details.id,
+                platform: channel.platform,
+              },
+            },
+            create: {
               digitalCampaignDetailsId: details.id,
               platform: channel.platform,
+              socialAccountId: channel.socialAccountId,
             },
-          },
-          create: {
-            digitalCampaignDetailsId: details.id,
-            platform: channel.platform,
-            socialAccountId: channel.socialAccountId,
-          },
-          update: {
-            socialAccountId: channel.socialAccountId ?? null,
-          },
-        }),
-      ),
+            update: {
+              socialAccountId: channel.socialAccountId ?? null,
+            },
+          }),
+        ),
     );
 
     return channels;
@@ -194,20 +214,38 @@ export class DigitalCampaignsService {
       );
     }
 
+    // Campagnes dont les canaux n'ont pas de compte rattaché (ou un compte
+    // expiré/déconnecté depuis) : repli sur le compte actif de l'entreprise.
+    const needsFallback = details.channels.some(
+      (c) => c.socialAccount?.status !== SocialAccountStatus.ACTIVE,
+    );
+    const activeAccounts = needsFallback
+      ? await this.activeAccountsByPlatform(user.companyId!)
+      : new Map<SocialPlatform, { id: string }>();
+
     const channelInputs = await Promise.all(
       details.channels.map(async (channel) => {
-        if (!channel.socialAccount) {
+        const account =
+          channel.socialAccount?.status === SocialAccountStatus.ACTIVE
+            ? channel.socialAccount
+            : activeAccounts.get(channel.platform);
+        if (!account) {
           return { platform: channel.platform, metrics: null };
         }
         const latestMetric = await this.prisma.platformMetric.findFirst({
-          where: { socialAccountId: channel.socialAccount.id },
+          where: { socialAccountId: account.id },
           orderBy: { fetchedAt: 'desc' },
         });
         if (!latestMetric) {
-          return { platform: channel.platform, metrics: null };
+          return {
+            platform: channel.platform,
+            metrics: null,
+            accountLinked: true,
+          };
         }
         return {
           platform: channel.platform,
+          accountLinked: true,
           metrics: {
             followerCount: latestMetric.followerCount ?? undefined,
             reach: latestMetric.reach ?? undefined,
@@ -377,6 +415,25 @@ export class DigitalCampaignsService {
   }
 
   // ---------- Private helpers ----------
+
+  /** Compte ACTIF le plus récent de l'entreprise, par plateforme. */
+  private async activeAccountsByPlatform(
+    companyId: string,
+  ): Promise<Map<SocialPlatform, { id: string }>> {
+    const accounts =
+      (await this.prisma.socialAccount.findMany({
+        where: { companyId, status: SocialAccountStatus.ACTIVE },
+        orderBy: { createdAt: 'desc' },
+        select: { id: true, platform: true },
+      })) ?? [];
+    const byPlatform = new Map<SocialPlatform, { id: string }>();
+    for (const account of accounts) {
+      if (!byPlatform.has(account.platform)) {
+        byPlatform.set(account.platform, { id: account.id });
+      }
+    }
+    return byPlatform;
+  }
 
   private async validateDigitalCampaignAccess(
     campaignId: string,

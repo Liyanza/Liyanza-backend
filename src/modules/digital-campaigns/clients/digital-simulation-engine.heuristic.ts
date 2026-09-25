@@ -97,7 +97,9 @@ export class DigitalSimulationEngineHeuristic implements DigitalSimulationEngine
       (channel, index) => {
         if (!channel.metrics) {
           warnings.push(
-            `Aucune métrique réelle disponible pour ${channel.platform} — connectez le compte social correspondant pour une prévision plus précise.`,
+            channel.accountLinked
+              ? `Les statistiques du compte ${channel.platform} lié ne sont pas encore synchronisées — la prévision utilise les références de marché. Resynchronisez le compte depuis Mon entreprise puis relancez la simulation.`
+              : `Aucune métrique réelle disponible pour ${channel.platform} — connectez le compte social correspondant pour une prévision plus précise.`,
           );
         }
         const share = weights[index] / totalWeight;

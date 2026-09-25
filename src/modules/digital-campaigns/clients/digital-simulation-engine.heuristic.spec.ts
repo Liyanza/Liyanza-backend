@@ -62,6 +62,20 @@ describe('DigitalSimulationEngineHeuristic', () => {
     const result = await engine.simulate(baseParams());
     expect(result.warnings).toHaveLength(1);
     expect(result.warnings[0]).toContain('FACEBOOK');
+    expect(result.warnings[0]).toContain('connectez');
+  });
+
+  it('asks to resync, not to connect, when the account is linked but not yet synced', async () => {
+    const result = await engine.simulate(
+      baseParams({
+        channels: [
+          { platform: 'FACEBOOK', metrics: null, accountLinked: true },
+        ],
+      }),
+    );
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]).toContain('pas encore synchronisées');
+    expect(result.warnings[0]).not.toContain('connectez');
   });
 
   it('emits no warning when the channel has real metrics', async () => {

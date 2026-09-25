@@ -21,6 +21,11 @@ export interface DigitalChannelMetricsSnapshot {
 export interface DigitalSimulationChannelInput {
   platform: 'FACEBOOK' | 'INSTAGRAM';
   metrics: DigitalChannelMetricsSnapshot | null;
+  /**
+   * Un compte actif est lié au canal. Avec `metrics: null`, ses statistiques
+   * ne sont simplement pas encore synchronisées (message distinct).
+   */
+  accountLinked?: boolean;
 }
 
 export interface DigitalSimulationParameters {
