@@ -279,6 +279,34 @@ describe('DigitalCampaignsService', () => {
         { id: 'chan-1', platform: SocialPlatform.FACEBOOK },
       ]);
     });
+
+    it("should attach the company's active account when no socialAccountId is given", async () => {
+      prisma.campaign.findFirst.mockResolvedValue(digitalCampaign);
+      prisma.digitalCampaignDetails.findUnique.mockResolvedValue(details);
+      prisma.socialAccount.findMany.mockResolvedValue([
+        { id: 'sa-active', platform: SocialPlatform.FACEBOOK },
+      ]);
+      prisma.$transaction.mockResolvedValue([]);
+
+      await service.selectChannels(
+        'camp-1',
+        { channels: [{ platform: SocialPlatform.FACEBOOK }] },
+        user,
+      );
+
+      expect(prisma.socialAccount.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { companyId: 'company-1', status: 'ACTIVE' },
+        }),
+      );
+      expect(prisma.digitalCampaignChannel.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          create: expect.objectContaining({
+            socialAccountId: 'sa-active',
+          }) as Record<string, unknown>,
+        }),
+      );
+    });
   });
 
   describe('createSimulation', () => {
@@ -332,6 +360,69 @@ describe('DigitalCampaignsService', () => {
       expect(simulationEngine.simulate).toHaveBeenCalledWith(
         expect.objectContaining({
           channels: [{ platform: SocialPlatform.FACEBOOK, metrics: null }],
+        }),
+      );
+    });
+
+    it("should fall back to the company's active account and use its latest metrics", async () => {
+      prisma.campaign.findFirst.mockResolvedValue(digitalCampaign);
+      prisma.digitalCampaignDetails.findUnique.mockResolvedValue({
+        id: 'details-1',
+        objective: DigitalObjective.AWARENESS,
+        ageMin: 18,
+        ageMax: 45,
+        targetGender: 'ALL',
+        targetLocations: [],
+        targetInterests: [],
+        budgetAllocation: BudgetAllocationType.TOTAL,
+        channels: [
+          { platform: SocialPlatform.FACEBOOK, socialAccount: null },
+          {
+            platform: SocialPlatform.INSTAGRAM,
+            socialAccount: { id: 'sa-ig', status: 'EXPIRED' },
+          },
+        ],
+      });
+      prisma.socialAccount.findMany.mockResolvedValue([
+        { id: 'sa-fb', platform: SocialPlatform.FACEBOOK },
+      ]);
+      prisma.platformMetric.findFirst.mockResolvedValue({
+        followerCount: 1200,
+        reach: null,
+        impressions: 5000,
+        engagementRate: 2.5,
+        avgCpm: null,
+        avgCpc: null,
+      });
+      simulationEngine.simulate.mockResolvedValue({
+        predictedReach: 100,
+        predictedEngagementRate: 1,
+        predictedCtr: 1,
+        predictedRoas: 1,
+        narrativeSummary: 'summary',
+        warnings: [],
+      });
+      prisma.digitalSimulation.create.mockResolvedValue({ id: 'sim-1' });
+
+      await service.createSimulation('camp-1', user);
+
+      expect(prisma.platformMetric.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { socialAccountId: 'sa-fb' } }),
+      );
+      expect(simulationEngine.simulate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          channels: [
+            {
+              platform: SocialPlatform.FACEBOOK,
+              accountLinked: true,
+              metrics: expect.objectContaining({
+                followerCount: 1200,
+                impressions: 5000,
+              }) as Record<string, unknown>,
+            },
+            // Compte Instagram expiré et aucun compte actif : pas de métriques.
+            { platform: SocialPlatform.INSTAGRAM, metrics: null },
+          ],
         }),
       );
     });
