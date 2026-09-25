@@ -105,6 +105,27 @@ export class DigitalCampaignsController {
     return this.digitalCampaignsService.createSimulation(campaignId, req.user);
   }
 
+  @Post('simulations-digitales/:simulationId/analyse')
+  @Roles(Role.ADMIN, Role.MARKETING_MANAGER, Role.COMMUNITY_MANAGER)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Generate the AI analysis of a simulation saved without one (same figures)',
+  })
+  @ApiResponse({ status: 200, description: 'Simulation with its AI analysis' })
+  @ApiResponse({ status: 503, description: 'AI service unavailable' })
+  async analyzeSimulation(
+    @Param('id') campaignId: string,
+    @Param('simulationId') simulationId: string,
+    @Request() req: AuthenticatedRequest,
+  ) {
+    return this.digitalCampaignsService.analyzeExistingSimulation(
+      campaignId,
+      simulationId,
+      req.user,
+    );
+  }
+
   @Get('simulations-digitales')
   @Roles(Role.ADMIN, Role.MARKETING_MANAGER, Role.COMMUNITY_MANAGER)
   @ApiOperation({ summary: 'Get the digital simulation history' })

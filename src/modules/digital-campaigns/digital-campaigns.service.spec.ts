@@ -3,6 +3,7 @@ import {
   BadRequestException,
   ForbiddenException,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { DigitalCampaignsService } from './digital-campaigns.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -31,6 +32,8 @@ describe('DigitalCampaignsService', () => {
       create: jest.Mock;
       findMany: jest.Mock;
       count: jest.Mock;
+      findFirst: jest.Mock;
+      update: jest.Mock;
     };
     $transaction: jest.Mock;
   };
@@ -75,6 +78,8 @@ describe('DigitalCampaignsService', () => {
               create: jest.fn(),
               findMany: jest.fn(),
               count: jest.fn(),
+              findFirst: jest.fn(),
+              update: jest.fn(),
             },
             $transaction: jest.fn(),
           },
@@ -306,6 +311,111 @@ describe('DigitalCampaignsService', () => {
           }) as Record<string, unknown>,
         }),
       );
+    });
+  });
+
+  describe('analyzeExistingSimulation', () => {
+    const storedSimulation = {
+      id: 'sim-1',
+      campaignId: 'camp-1',
+      inputSnapshot: {
+        objective: DigitalObjective.CONVERSION,
+        budget: { amount: 60000, allocation: BudgetAllocationType.TOTAL },
+        audience: {
+          ageMin: 25,
+          ageMax: 45,
+          targetGender: 'ALL',
+          locations: ['Douala'],
+          interests: [],
+        },
+        channels: [{ platform: SocialPlatform.FACEBOOK, metrics: null }],
+      },
+      predictedReach: 7173,
+      predictedEngagementRate: 1.65,
+      predictedCtr: 0.88,
+      predictedRoas: 2.8,
+      narrativeSummary: 'Texte du moteur',
+      warnings: [],
+      avgCpc: 120,
+      costPerAcquisition: 20000,
+      conversionRate: 4.8,
+      scenarios: [],
+      channelBreakdown: [],
+      weeklySeries: [],
+      aiAnalysis: null,
+    };
+    const campaignWithDates = {
+      ...digitalCampaign,
+      name: 'Campagne test',
+      startDate: new Date('2026-10-01'),
+      endDate: new Date('2026-10-15'),
+    };
+    const analysis = {
+      summary: 'Résumé IA',
+      strengths: [],
+      risks: [],
+      recommendations: [],
+      scenarioChoice: '',
+    };
+
+    it('should analyze a stored simulation with its saved figures and persist the result', async () => {
+      prisma.campaign.findFirst.mockResolvedValue(campaignWithDates);
+      prisma.digitalSimulation.findFirst.mockResolvedValue(storedSimulation);
+      simulationAnalysis.analyze.mockResolvedValue(analysis);
+      prisma.digitalSimulation.update.mockResolvedValue({
+        ...storedSimulation,
+        aiAnalysis: analysis,
+      });
+
+      await service.analyzeExistingSimulation('camp-1', 'sim-1', user);
+
+      expect(prisma.digitalSimulation.findFirst).toHaveBeenCalledWith({
+        where: { id: 'sim-1', campaignId: 'camp-1' },
+      });
+      expect(simulationEngine.simulate).not.toHaveBeenCalled();
+      expect(simulationAnalysis.analyze).toHaveBeenCalledWith(
+        expect.objectContaining({
+          objective: DigitalObjective.CONVERSION,
+          channels: [SocialPlatform.FACEBOOK],
+          results: expect.objectContaining({
+            predictedReach: 7173,
+          }) as Record<string, unknown>,
+        }),
+      );
+      expect(prisma.digitalSimulation.update).toHaveBeenCalledWith({
+        where: { id: 'sim-1' },
+        data: { aiAnalysis: analysis, narrativeSummary: 'Résumé IA' },
+      });
+    });
+
+    it('should return an already analyzed simulation without calling the AI', async () => {
+      prisma.campaign.findFirst.mockResolvedValue(campaignWithDates);
+      prisma.digitalSimulation.findFirst.mockResolvedValue({
+        ...storedSimulation,
+        aiAnalysis: analysis,
+      });
+
+      await service.analyzeExistingSimulation('camp-1', 'sim-1', user);
+
+      expect(simulationAnalysis.analyze).not.toHaveBeenCalled();
+      expect(prisma.digitalSimulation.update).not.toHaveBeenCalled();
+    });
+
+    it('should 404 on a simulation of another campaign and 503 when the AI fails', async () => {
+      prisma.campaign.findFirst.mockResolvedValue(campaignWithDates);
+      prisma.digitalSimulation.findFirst.mockResolvedValueOnce(null);
+      await expect(
+        service.analyzeExistingSimulation('camp-1', 'sim-x', user),
+      ).rejects.toThrow(NotFoundException);
+
+      prisma.digitalSimulation.findFirst.mockResolvedValue(storedSimulation);
+      simulationAnalysis.analyze.mockRejectedValueOnce(
+        new Error('IA service unreachable (ECONNABORTED)'),
+      );
+      await expect(
+        service.analyzeExistingSimulation('camp-1', 'sim-1', user),
+      ).rejects.toThrow(ServiceUnavailableException);
+      expect(prisma.digitalSimulation.update).not.toHaveBeenCalled();
     });
   });
 
