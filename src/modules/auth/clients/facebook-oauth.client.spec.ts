@@ -55,6 +55,45 @@ describe('FacebookOAuthClient', () => {
       expect(url.searchParams.get('scope')).toBe('email,public_profile');
       expect(url.searchParams.get('state')).toBe('state-123');
     });
+
+    it('should use the dedicated login App when FACEBOOK_LOGIN_APP_ID/SECRET are set', async () => {
+      configService.get.mockImplementation(
+        (key: string) =>
+          ({
+            FACEBOOK_LOGIN_APP_ID: 'login-app-id',
+            FACEBOOK_LOGIN_APP_SECRET: 'login-app-secret',
+          })[key],
+      );
+
+      const url = new URL(
+        client.getAuthorizationUrl(
+          'state-123',
+          'https://api.liyanza.com/auth/facebook/callback',
+        ),
+      );
+      expect(url.searchParams.get('client_id')).toBe('login-app-id');
+
+      http.get
+        .mockReturnValueOnce(of(axiosResponse({ access_token: 'token' })))
+        .mockReturnValueOnce(
+          of(axiosResponse({ id: 'fb-id', email: 'user@example.com' })),
+        );
+      await client.exchangeCodeForProfile(
+        'auth-code',
+        'https://api.liyanza.com/auth/facebook/callback',
+      );
+      expect(http.get).toHaveBeenNthCalledWith(
+        1,
+        expect.stringContaining('/oauth/access_token'),
+        {
+          params: expect.objectContaining({
+            client_id: 'login-app-id',
+            client_secret: 'login-app-secret',
+          }) as Record<string, string>,
+        },
+      );
+      expect(configService.getOrThrow).not.toHaveBeenCalledWith('META_APP_ID');
+    });
   });
 
   describe('exchangeCodeForProfile', () => {

@@ -29,8 +29,9 @@ interface FacebookErrorBody {
 /**
  * Implémentation réelle (BACK-505) de la connexion Facebook — DISTINCTE de
  * `MetaGraphClient` (liaison d'un compte pro à une campagne, BACK-502/503) :
- * même famille d'API (Graph API), même App Meta réutilisée
- * (META_APP_ID/META_APP_SECRET), mais portée fonctionnelle différente
+ * même famille d'API (Graph API), App Meta dédiée
+ * (FACEBOOK_LOGIN_APP_ID/SECRET) ou, à défaut, celle de la liaison
+ * (META_APP_ID/META_APP_SECRET), et portée fonctionnelle différente
  * (identité personnelle vs Page professionnelle) et redirect_uri dédiée
  * (FACEBOOK_LOGIN_REDIRECT_URI). Gardée séparée plutôt que fusionnée dans
  * `MetaGraphClient` pour ne pas mélanger les deux domaines dans une même
@@ -51,14 +52,28 @@ export class FacebookOAuthClient implements OAuthLoginClient {
     return `https://graph.facebook.com/${version}`;
   }
 
+  /**
+   * Meta refuse de combiner "Facebook Login" et les cas d'utilisation
+   * Page/Instagram dans une même App : la connexion peut donc avoir sa
+   * propre App. Les deux variables vont ensemble (validé au démarrage).
+   */
+  private get credentials(): { appId: string; appSecret: string } {
+    const appId = this.configService.get<string>('FACEBOOK_LOGIN_APP_ID');
+    const appSecret = this.configService.get<string>(
+      'FACEBOOK_LOGIN_APP_SECRET',
+    );
+    if (appId && appSecret) return { appId, appSecret };
+    return {
+      appId: this.configService.getOrThrow<string>('META_APP_ID'),
+      appSecret: this.configService.getOrThrow<string>('META_APP_SECRET'),
+    };
+  }
+
   getAuthorizationUrl(state: string, redirectUri: string): string {
     const version =
       this.configService.get<string>('META_GRAPH_API_VERSION') ?? 'v21.0';
     const url = new URL(`https://www.facebook.com/${version}/dialog/oauth`);
-    url.searchParams.set(
-      'client_id',
-      this.configService.getOrThrow<string>('META_APP_ID'),
-    );
+    url.searchParams.set('client_id', this.credentials.appId);
     url.searchParams.set('redirect_uri', redirectUri);
     url.searchParams.set('state', state);
     url.searchParams.set('scope', 'email,public_profile');
@@ -70,11 +85,12 @@ export class FacebookOAuthClient implements OAuthLoginClient {
     code: string,
     redirectUri: string,
   ): Promise<OAuthUserProfile> {
+    const { appId, appSecret } = this.credentials;
     const token = await this.graphGet<FacebookTokenResponse>(
       '/oauth/access_token',
       {
-        client_id: this.configService.getOrThrow<string>('META_APP_ID'),
-        client_secret: this.configService.getOrThrow<string>('META_APP_SECRET'),
+        client_id: appId,
+        client_secret: appSecret,
         redirect_uri: redirectUri,
         code,
       },
