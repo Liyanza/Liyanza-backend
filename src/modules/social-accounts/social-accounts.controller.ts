@@ -20,6 +20,7 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { SocialAccountsService } from './social-accounts.service';
+import { PageHealthService } from './page-health/page-health.service';
 import { SocialAccountQueryDto } from './dto/social-account-query.dto';
 import { OAuthCallbackQueryDto } from './dto/oauth-callback-query.dto';
 import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
@@ -33,7 +34,46 @@ interface AuthenticatedRequest extends ExpressRequest {
 @ApiTags('social-accounts')
 @Controller('social-accounts')
 export class SocialAccountsController {
-  constructor(private readonly socialAccountsService: SocialAccountsService) {}
+  constructor(
+    private readonly socialAccountsService: SocialAccountsService,
+    private readonly pageHealthService: PageHealthService,
+  ) {}
+
+  /**
+   * Santé d'une Page Facebook liée — lecture seule, ouverte à tous les rôles
+   * de l'entreprise comme `GET /social-accounts`.
+   */
+  @Get(':id/health')
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Facebook Page health (28 days, best posts and times)',
+  })
+  @ApiResponse({ status: 409, description: 'The Page must be reconnected' })
+  async getHealth(
+    @Param('id') id: string,
+    @Query('refresh') refresh: string | undefined,
+    @Request() req: AuthenticatedRequest,
+  ) {
+    return this.pageHealthService.getHealth(
+      id,
+      req.user,
+      refresh === '1' || refresh === 'true',
+    );
+  }
+
+  /** Génère le résumé IA de la santé de la Page (conservé 7 jours). */
+  @Post(':id/health/analysis')
+  @Roles(Role.ADMIN, Role.MARKETING_MANAGER, Role.COMMUNITY_MANAGER)
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Generate the AI summary of the Page health' })
+  @ApiResponse({ status: 503, description: 'AI service unavailable' })
+  async analyzeHealth(
+    @Param('id') id: string,
+    @Request() req: AuthenticatedRequest,
+  ) {
+    return this.pageHealthService.analyze(id, req.user);
+  }
 
   /**
    * Lecture seule, transverse à tous les rôles authentifiés (comme
