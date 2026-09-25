@@ -46,12 +46,15 @@ const OAUTH_STATE_TTL_SECONDS = 900;
 
 // `business_management` : sans lui, une Page détenue par un portefeuille
 // business n'est pas visible (voir MetaGraphClient.listManagedPages).
+// `ads_read` : résultats réels des campagnes Facebook Ads (« Prévu vs réel »),
+// lus avec le token utilisateur conservé à part (adsToken*).
 const REQUESTED_SCOPES: Record<SocialPlatform, string[]> = {
   [SocialPlatform.FACEBOOK]: [
     'pages_show_list',
     'pages_read_engagement',
     'read_insights',
     'business_management',
+    'ads_read',
   ],
   [SocialPlatform.INSTAGRAM]: [
     'pages_show_list',
@@ -237,6 +240,20 @@ export class SocialAccountsService {
       const tokenExpiresAt = token.expiresInSeconds
         ? new Date(Date.now() + token.expiresInSeconds * 1000)
         : null;
+      // Facebook : le token utilisateur (et non celui de la Page) donne accès
+      // aux statistiques publicitaires ; conservé chiffré, à part.
+      const adsToken =
+        statePayload.platform === SocialPlatform.FACEBOOK
+          ? encryptToken(token.accessToken, encryptionKey)
+          : null;
+      const adsFields = adsToken
+        ? {
+            adsTokenCiphertext: adsToken.ciphertext,
+            adsTokenIv: adsToken.iv,
+            adsTokenTag: adsToken.tag,
+            adsTokenExpiresAt: tokenExpiresAt,
+          }
+        : {};
 
       const socialAccount = await this.prisma.socialAccount.upsert({
         where: {
@@ -258,6 +275,7 @@ export class SocialAccountsService {
           status: SocialAccountStatus.ACTIVE,
           companyId: statePayload.companyId,
           connectedById: statePayload.userId,
+          ...adsFields,
         },
         update: {
           externalAccountName: profile.externalAccountName,
@@ -265,10 +283,12 @@ export class SocialAccountsService {
           accessTokenIv: encrypted.iv,
           accessTokenTag: encrypted.tag,
           tokenExpiresAt,
+          scopes: REQUESTED_SCOPES[statePayload.platform],
           status: SocialAccountStatus.ACTIVE,
           connectedById: statePayload.userId,
           // Reconnexion : un futur cycle d'expiration doit pouvoir renotifier.
           expiryReminderSentAt: null,
+          ...adsFields,
         },
       });
 
@@ -379,6 +399,40 @@ export class SocialAccountsService {
         tag: account.accessTokenTag,
       },
       encryptionKey,
+    );
+  }
+
+  /**
+   * Token publicitaire (utilisateur, `ads_read`) du compte Facebook actif le
+   * plus récent de l'entreprise, déchiffré — usage serveur uniquement
+   * (lecture des résultats Facebook Ads), jamais renvoyé au client. `null`
+   * si aucun compte Facebook actif ne l'a (connecté avant l'ajout d'ads_read).
+   */
+  async getAdsAccessToken(companyId: string): Promise<string | null> {
+    const account = await this.prisma.socialAccount.findFirst({
+      where: {
+        companyId,
+        platform: SocialPlatform.FACEBOOK,
+        status: SocialAccountStatus.ACTIVE,
+        adsTokenCiphertext: { not: null },
+      },
+      orderBy: { updatedAt: 'desc' },
+      select: { adsTokenCiphertext: true, adsTokenIv: true, adsTokenTag: true },
+    });
+    if (
+      !account?.adsTokenCiphertext ||
+      !account.adsTokenIv ||
+      !account.adsTokenTag
+    ) {
+      return null;
+    }
+    return decryptToken(
+      {
+        ciphertext: account.adsTokenCiphertext,
+        iv: account.adsTokenIv,
+        tag: account.adsTokenTag,
+      },
+      this.configService.getOrThrow<string>('SOCIAL_TOKEN_ENCRYPTION_KEY'),
     );
   }
 

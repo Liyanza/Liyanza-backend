@@ -525,6 +525,14 @@ model DigitalCampaignDetails {
 
   budgetAllocation BudgetAllocationType
 
+  /// Campagne Facebook Ads (Meta) réellement diffusée pour cette campagne :
+  /// ses résultats réels sont comparés à la simulation (« Prévu vs réel »).
+  metaAdAccountId      String?
+  metaCampaignId       String?
+  metaCampaignName     String?
+  metaAdCurrency       String?
+  metaCampaignLinkedAt DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -565,6 +573,16 @@ model SocialAccount {
   accessTokenTag        String
   tokenExpiresAt        DateTime?
   scopes                String[]
+
+  /// Token UTILISATEUR longue durée (Facebook uniquement, permission
+  /// `ads_read`) : les statistiques publicitaires (`/me/adaccounts`,
+  /// `/{campaign}/insights`) ne sont lisibles qu'avec lui, pas avec le token
+  /// de Page ci-dessus. Chiffré de la même façon ; null tant que le compte
+  /// n'a pas été (re)connecté depuis l'ajout de `ads_read`.
+  adsTokenCiphertext String?   @db.Text
+  adsTokenIv         String?
+  adsTokenTag        String?
+  adsTokenExpiresAt  DateTime?
 
   status               SocialAccountStatus @default(ACTIVE)
   lastSyncedAt         DateTime?

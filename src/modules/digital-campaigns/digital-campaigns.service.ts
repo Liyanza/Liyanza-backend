@@ -524,7 +524,11 @@ export class DigitalCampaignsService {
     return byPlatform;
   }
 
-  private async validateDigitalCampaignAccess(
+  /**
+   * Campagne digitale de l'entreprise de l'utilisateur (404 sinon, sans
+   * révéler son existence). Aussi utilisée par CampaignPerformanceService.
+   */
+  async validateDigitalCampaignAccess(
     campaignId: string,
     user: AuthenticatedUser,
   ): Promise<Campaign> {
