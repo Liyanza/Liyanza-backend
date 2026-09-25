@@ -13,6 +13,14 @@ import { UpsertDigitalDetailsDto } from './dto/upsert-digital-details.dto';
 import { SelectDigitalChannelsDto } from './dto/select-digital-channels.dto';
 import type { DigitalSimulationEngineInterface } from './clients/digital-simulation-engine.interface';
 import { DIGITAL_SIMULATION_ENGINE_TOKEN } from './clients/digital-simulation-engine.interface';
+import type {
+  DigitalSimulationParameters,
+  DigitalSimulationResult,
+} from './clients/digital-simulation-engine.interface';
+import {
+  SimulationAnalysisClient,
+  type SimulationAnalysis,
+} from './clients/simulation-analysis.client';
 import { Campaign, CampaignStatus, CampaignType, Prisma } from '@prisma/client';
 
 @Injectable()
@@ -23,6 +31,7 @@ export class DigitalCampaignsService {
     private prisma: PrismaService,
     @Inject(DIGITAL_SIMULATION_ENGINE_TOKEN)
     private simulationEngine: DigitalSimulationEngineInterface,
+    private simulationAnalysis: SimulationAnalysisClient,
   ) {}
 
   async upsertDetails(
@@ -246,6 +255,15 @@ export class DigitalCampaignsService {
       );
     }
 
+    // L'analyse IA (explication, risques, recommandations) complète les
+    // chiffres du moteur ; son échec ne bloque jamais la simulation.
+    const analysis = await this.analyzeSimulation(
+      campaign,
+      parameters,
+      result,
+      user.companyId,
+    );
+
     return this.prisma.digitalSimulation.create({
       data: {
         campaignId: campaign.id,
@@ -258,7 +276,7 @@ export class DigitalCampaignsService {
         predictedEngagementRate: result.predictedEngagementRate,
         predictedCtr: result.predictedCtr,
         predictedRoas: result.predictedRoas,
-        narrativeSummary: result.narrativeSummary,
+        narrativeSummary: analysis?.summary ?? result.narrativeSummary,
         warnings: result.warnings,
         avgCpc: result.avgCpc,
         costPerAcquisition: result.costPerAcquisition,
@@ -267,8 +285,66 @@ export class DigitalCampaignsService {
         channelBreakdown:
           result.channelBreakdown as unknown as Prisma.InputJsonValue,
         weeklySeries: result.weeklySeries as unknown as Prisma.InputJsonValue,
+        ...(analysis && {
+          aiAnalysis: analysis as unknown as Prisma.InputJsonValue,
+        }),
       },
     });
+  }
+
+  /**
+   * Fait expliquer la simulation par l'assistant IA. `null` si le service
+   * n'est pas configuré ou échoue : la simulation reste enregistrée avec le
+   * texte de repli du moteur.
+   */
+  private async analyzeSimulation(
+    campaign: Campaign,
+    parameters: DigitalSimulationParameters,
+    result: DigitalSimulationResult,
+    companyId: string | null,
+  ): Promise<SimulationAnalysis | null> {
+    try {
+      const company = companyId
+        ? await this.prisma.company.findUnique({
+            where: { id: companyId },
+            select: { name: true, businessSector: true, address: true },
+          })
+        : null;
+      const toDay = (date: Date) => date.toISOString().slice(0, 10);
+
+      return await this.simulationAnalysis.analyze({
+        campaignName: campaign.name,
+        objective: parameters.objective,
+        budget: {
+          amount: parameters.budget.amount,
+          allocation: parameters.budget.allocation,
+        },
+        startDate: toDay(campaign.startDate),
+        endDate: toDay(campaign.endDate),
+        audience: parameters.audience,
+        channels: parameters.channels.map((channel) => channel.platform),
+        ...(company && { companyProfile: company }),
+        results: {
+          predictedReach: result.predictedReach,
+          predictedEngagementRate: result.predictedEngagementRate,
+          predictedCtr: result.predictedCtr,
+          predictedRoas: result.predictedRoas,
+          avgCpc: result.avgCpc,
+          costPerAcquisition: result.costPerAcquisition,
+          conversionRate: result.conversionRate,
+          warnings: result.warnings,
+        },
+        scenarios: result.scenarios,
+        channelBreakdown: result.channelBreakdown,
+      });
+    } catch (error) {
+      this.logger.warn(
+        `Simulation saved without AI analysis for campaign ${campaign.id}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return null;
+    }
   }
 
   async getSimulations(
