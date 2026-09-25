@@ -18,6 +18,7 @@ import {
   SocialPlatform,
 } from '@prisma/client';
 import { SimulationAnalysisClient } from './clients/simulation-analysis.client';
+import { LocalBenchmarksService } from './performance/local-benchmarks.service';
 
 describe('DigitalCampaignsService', () => {
   let service: DigitalCampaignsService;
@@ -39,6 +40,7 @@ describe('DigitalCampaignsService', () => {
   };
   let simulationEngine: { simulate: jest.Mock };
   let simulationAnalysis: { analyze: jest.Mock };
+  let localBenchmarks: { getCalibration: jest.Mock };
 
   const user: AuthenticatedUser = {
     userId: 'user-1',
@@ -58,6 +60,8 @@ describe('DigitalCampaignsService', () => {
     simulationEngine = { simulate: jest.fn() };
     // Par défaut : service IA non configuré (aucune analyse).
     simulationAnalysis = { analyze: jest.fn().mockResolvedValue(null) };
+    // Par défaut : pas encore de références locales.
+    localBenchmarks = { getCalibration: jest.fn().mockResolvedValue(null) };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -89,6 +93,7 @@ describe('DigitalCampaignsService', () => {
           useValue: simulationEngine,
         },
         { provide: SimulationAnalysisClient, useValue: simulationAnalysis },
+        { provide: LocalBenchmarksService, useValue: localBenchmarks },
       ],
     }).compile();
 

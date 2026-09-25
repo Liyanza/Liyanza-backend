@@ -7,6 +7,7 @@ import { DigitalSimulationEngineHeuristic } from './clients/digital-simulation-e
 import { DIGITAL_SIMULATION_ENGINE_TOKEN } from './clients/digital-simulation-engine.interface';
 import { SimulationAnalysisClient } from './clients/simulation-analysis.client';
 import { CampaignPerformanceService } from './performance/campaign-performance.service';
+import { LocalBenchmarksService } from './performance/local-benchmarks.service';
 import { RedisModule } from '../redis/redis.module';
 import { SocialAccountsModule } from '../social-accounts/social-accounts.module';
 
@@ -23,6 +24,7 @@ import { SocialAccountsModule } from '../social-accounts/social-accounts.module'
   providers: [
     DigitalCampaignsService,
     CampaignPerformanceService,
+    LocalBenchmarksService,
     SimulationAnalysisClient,
     {
       provide: DIGITAL_SIMULATION_ENGINE_TOKEN,

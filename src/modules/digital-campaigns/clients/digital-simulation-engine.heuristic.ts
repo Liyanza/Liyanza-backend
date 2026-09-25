@@ -8,6 +8,7 @@ import {
   DigitalSimulationResult,
   DigitalSimulationScenarioSnapshot,
   DigitalSimulationWeekSnapshot,
+  LocalBenchmark,
 } from './digital-simulation-engine.interface';
 import {
   DIGITAL_SIMULATION_BENCHMARKS,
@@ -23,6 +24,12 @@ const PLATFORM_LABEL: Record<'FACEBOOK' | 'INSTAGRAM', string> = {
 // de plusieurs semaines — ordre de grandeur généralement observé sur Meta
 // Ads, pas une mesure Liyanza.
 const AVERAGE_FREQUENCY = 1.8;
+
+/**
+ * Poids des références de marché face aux campagnes réelles mesurées
+ * (équivaut à 5 campagnes) : voir `estimateChannel`.
+ */
+const CALIBRATION_PRIOR_WEIGHT = 5;
 
 // Portée organique additionnelle apportée par une audience déjà acquise
 // (abonnés existants), en plus de la portée payante.
@@ -111,6 +118,8 @@ export class DigitalSimulationEngineHeuristic implements DigitalSimulationEngine
           channel.metrics,
           breadth,
           `${seed}:${channel.platform}`,
+          // Références mesurées sur des campagnes Facebook Ads : Facebook seulement.
+          channel.platform === 'FACEBOOK' ? params.calibration : null,
         );
         return {
           ...estimate,
@@ -242,12 +251,26 @@ export class DigitalSimulationEngineHeuristic implements DigitalSimulationEngine
     metrics: DigitalChannelMetricsSnapshot | null | undefined,
     breadth: number,
     seed: string,
+    calibration?: LocalBenchmark | null,
   ): Omit<ChannelEstimate, 'budgetAmount' | 'budgetPercent'> {
     const bench = DIGITAL_SIMULATION_BENCHMARKS[objective];
+    // Plus il y a de campagnes réelles, plus elles pèsent face à la
+    // référence de marché : n / (n + 5) (5 campagnes = moitié-moitié).
+    const weight = calibration
+      ? calibration.campaigns /
+        (calibration.campaigns + CALIBRATION_PRIOR_WEIGHT)
+      : 0;
+    const blend = (prior: number, observed: number | null | undefined) =>
+      observed && observed > 0
+        ? prior * (1 - weight) + observed * weight
+        : prior;
 
     const cpm =
       metrics?.avgCpm ||
-      midpoint(bench.cpmFcfa) * this.deterministicJitter(`${seed}:cpm`);
+      blend(
+        midpoint(bench.cpmFcfa) * this.deterministicJitter(`${seed}:cpm`),
+        calibration?.cpmFcfa,
+      );
     const impressions = cpm > 0 ? (budgetAmount / cpm) * 1000 : 0;
     const reachFromBudget = impressions / AVERAGE_FREQUENCY;
 
@@ -261,14 +284,18 @@ export class DigitalSimulationEngineHeuristic implements DigitalSimulationEngine
       // métriques réelles plutôt qu'une borne générique.
       ctr = (cpm / 1000 / metrics.avgCpc) * 100;
     } else {
-      ctr =
-        midpoint(bench.ctrPercent) * this.deterministicJitter(`${seed}:ctr`);
+      ctr = blend(
+        midpoint(bench.ctrPercent) * this.deterministicJitter(`${seed}:ctr`),
+        calibration?.ctrPercent,
+      );
     }
     const clicks = reach * (ctr / 100);
 
-    const conversionRate =
+    const conversionRate = blend(
       midpoint(bench.conversionRatePercent) *
-      this.deterministicJitter(`${seed}:conv`);
+        this.deterministicJitter(`${seed}:conv`),
+      calibration?.conversionRatePercent,
+    );
     const conversions = clicks * (conversionRate / 100);
 
     const engagementRate =

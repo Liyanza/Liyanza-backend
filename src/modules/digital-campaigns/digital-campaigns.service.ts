@@ -18,6 +18,7 @@ import type {
   DigitalSimulationParameters,
   DigitalSimulationResult,
 } from './clients/digital-simulation-engine.interface';
+import { LocalBenchmarksService } from './performance/local-benchmarks.service';
 import {
   SimulationAnalysisClient,
   type SimulationAnalysis,
@@ -40,6 +41,7 @@ export class DigitalCampaignsService {
     @Inject(DIGITAL_SIMULATION_ENGINE_TOKEN)
     private simulationEngine: DigitalSimulationEngineInterface,
     private simulationAnalysis: SimulationAnalysisClient,
+    private localBenchmarks: LocalBenchmarksService,
   ) {}
 
   async upsertDetails(
@@ -259,6 +261,21 @@ export class DigitalCampaignsService {
       }),
     );
 
+    // Références de coûts locales (campagnes Facebook Ads réelles) : un
+    // complément, jamais un blocage de la simulation.
+    const calibration = await this.localBenchmarks
+      .getCalibration(
+        user.companyId!,
+        details.objective,
+        details.targetLocations,
+      )
+      .catch((error: unknown) => {
+        this.logger.warn(
+          `Local benchmarks unavailable: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        return null;
+      });
+
     const parameters = {
       objective: details.objective,
       budget: {
@@ -275,6 +292,7 @@ export class DigitalCampaignsService {
       channels: channelInputs as Parameters<
         DigitalSimulationEngineInterface['simulate']
       >[0]['channels'],
+      calibration,
     };
 
     // Le moteur est appelé AVANT toute écriture (même correctif d'atomicité

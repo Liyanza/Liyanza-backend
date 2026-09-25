@@ -10,6 +10,7 @@ import type { RedisService } from '../../redis/redis.service';
 import type { DigitalCampaignsService } from '../digital-campaigns.service';
 import type { SocialAccountsService } from '../../social-accounts/social-accounts.service';
 import type { MetaAdsClient } from '../../social-accounts/clients/meta-ads.client';
+import type { LocalBenchmarksService } from './local-benchmarks.service';
 import {
   MetaApiError,
   MetaTokenExpiredError,
@@ -48,6 +49,7 @@ describe('CampaignPerformanceService', () => {
   let redis: { get: jest.Mock; set: jest.Mock; del: jest.Mock };
   let socialAccounts: { getAdsAccessToken: jest.Mock };
   let metaAds: { listCampaigns: jest.Mock; getCampaignInsights: jest.Mock };
+  let localBenchmarks: { record: jest.Mock };
   let service: CampaignPerformanceService;
 
   beforeEach(() => {
@@ -69,6 +71,7 @@ describe('CampaignPerformanceService', () => {
         .fn()
         .mockResolvedValue({ totals: null, daily: [] }),
     };
+    localBenchmarks = { record: jest.fn().mockResolvedValue(undefined) };
     const digitalCampaigns = {
       validateDigitalCampaignAccess: jest.fn().mockResolvedValue(campaign),
     };
@@ -78,6 +81,7 @@ describe('CampaignPerformanceService', () => {
       digitalCampaigns as unknown as DigitalCampaignsService,
       socialAccounts as unknown as SocialAccountsService,
       metaAds as unknown as MetaAdsClient,
+      localBenchmarks as unknown as LocalBenchmarksService,
     );
   });
 
@@ -155,6 +159,7 @@ describe('CampaignPerformanceService', () => {
 
     const cached = await service.getPerformance('camp-1', user);
     expect(metaAds.getCampaignInsights).not.toHaveBeenCalled();
+    expect(localBenchmarks.record).not.toHaveBeenCalled();
     expect(cached).toMatchObject({
       linked: true,
       fetchedAt: '2026-10-05T10:00:00.000Z',
@@ -164,6 +169,14 @@ describe('CampaignPerformanceService', () => {
     expect(metaAds.getCampaignInsights).toHaveBeenCalledWith(
       'user-token',
       '1201',
+    );
+    // Résultats frais : ils alimentent les références de coûts locales.
+    expect(localBenchmarks.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        campaignId: 'camp-1',
+        companyId: 'company-1',
+        currency: 'XAF',
+      }),
     );
     expect(redis.set).toHaveBeenCalledWith(
       'meta:performance:camp-1',
