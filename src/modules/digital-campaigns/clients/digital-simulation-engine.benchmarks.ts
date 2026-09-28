@@ -65,6 +65,19 @@ export const DIGITAL_SIMULATION_BENCHMARKS: Record<
     engagementRatePercent: [1.0, 2.5],
     roasBase: [2.0, 4.0],
   },
+  // Publicités « Cliquer pour envoyer un message » (WhatsApp / Messenger) :
+  // un clic ouvre directement la conversation, d'où une « conversion »
+  // (conversation démarrée) bien plus fréquente par clic que sur un site.
+  // Meta annonce un coût par prospect nettement plus bas qu'avec une page de
+  // destination ; ordres de grandeur, à recalibrer par les références
+  // locales (LocalBenchmarksService) dès les premières campagnes réelles.
+  MESSAGES: {
+    cpmFcfa: [1400, 3200],
+    ctrPercent: [1.0, 2.2],
+    conversionRatePercent: [20, 40],
+    engagementRatePercent: [1.5, 3.5],
+    roasBase: [1.8, 3.5],
+  },
 };
 
 export function midpoint([low, high]: [number, number]): number {

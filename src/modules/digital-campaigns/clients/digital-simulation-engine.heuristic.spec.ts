@@ -58,6 +58,22 @@ describe('DigitalSimulationEngineHeuristic', () => {
     expect(conversion.predictedReach).not.toEqual(awareness.predictedReach);
   });
 
+  it('turns many more clicks into conversions for a WhatsApp conversations objective', async () => {
+    const traffic = await engine.simulate(baseParams({ objective: 'TRAFFIC' }));
+    const messages = await engine.simulate(
+      baseParams({ objective: 'MESSAGES' }),
+    );
+
+    // Un clic ouvre directement la conversation : taux de conversion ~10x.
+    expect(messages.conversionRate).toBeGreaterThan(traffic.conversionRate * 5);
+    expect(messages.costPerAcquisition).toBeLessThan(
+      traffic.costPerAcquisition,
+    );
+    expect(messages.narrativeSummary).toContain(
+      'conversations WhatsApp / Messenger',
+    );
+  });
+
   it('emits a warning when a channel has no real metrics', async () => {
     const result = await engine.simulate(baseParams());
     expect(result.warnings).toHaveLength(1);
