@@ -39,6 +39,7 @@ const raw = (overrides: Partial<RawPageHealth> = {}): RawPageHealth => ({
   engagement: [...series(28, 10), ...series(28, 10, 28)],
   newFollowers: series(28, 2),
   posts: [],
+  postsAccess: 'full',
   ...overrides,
 });
 

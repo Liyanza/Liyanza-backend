@@ -52,6 +52,8 @@ export interface PostingSlot {
 
 export interface PageHealth {
   pageName: string;
+  /** Données de publications disponibles (voir RawPageHealth.postsAccess). */
+  postsAccess: RawPageHealth['postsAccess'];
   followers: number | null;
   periodDays: number;
   kpis: Kpi[];
@@ -174,6 +176,7 @@ export function computePageHealth(raw: RawPageHealth, now: Date): PageHealth {
 
   return {
     pageName: raw.name,
+    postsAccess: raw.postsAccess ?? 'full',
     followers: raw.followers,
     periodDays: PERIOD_DAYS,
     kpis: [
