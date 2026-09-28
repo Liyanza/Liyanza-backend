@@ -48,10 +48,15 @@ const OAUTH_STATE_TTL_SECONDS = 900;
 // business n'est pas visible (voir MetaGraphClient.listManagedPages).
 // `ads_read` : résultats réels des campagnes Facebook Ads (« Prévu vs réel »),
 // lus avec le token utilisateur conservé à part (adsToken*).
+// `pages_read_user_content` : commentaires et réactions des publications de la
+// Page (Santé de la Page) ; sans elle, MetaPageClient se replie sur moins de
+// champs. Chaque permission demandée doit d'abord être ajoutée à l'App Meta
+// (cas d'utilisation), sinon Meta refuse la connexion (« Invalid Scopes »).
 const REQUESTED_SCOPES: Record<SocialPlatform, string[]> = {
   [SocialPlatform.FACEBOOK]: [
     'pages_show_list',
     'pages_read_engagement',
+    'pages_read_user_content',
     'read_insights',
     'business_management',
     'ads_read',
