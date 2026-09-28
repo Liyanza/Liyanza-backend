@@ -217,6 +217,15 @@ describe('SocialAccountsService', () => {
       );
       expect(url.searchParams.get('response_type')).toBe('code');
       expect(url.searchParams.get('state')).toBeTruthy();
+      // Chaque permission doit exister dans l'App Meta (sinon « Invalid Scopes »).
+      expect(url.searchParams.get('scope')?.split(',')).toEqual([
+        'pages_show_list',
+        'pages_read_engagement',
+        'pages_read_user_content',
+        'read_insights',
+        'business_management',
+        'ads_read',
+      ]);
     });
   });
 
