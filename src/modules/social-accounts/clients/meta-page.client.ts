@@ -29,7 +29,39 @@ export interface RawPageHealth {
   engagement: DailyValue[];
   newFollowers: DailyValue[];
   posts: RawPagePost[];
+  /**
+   * Ce que Meta a accepté de renvoyer sur les publications : les compteurs
+   * de commentaires (et parfois de réactions) exigent la permission
+   * `pages_read_user_content` — sans elle, on se replie sur moins de champs.
+   */
+  postsAccess: PostsAccess;
 }
+
+export type PostsAccess = 'full' | 'no_comments' | 'basic' | 'none';
+
+/** Champs demandés pour les publications, du plus complet au plus simple. */
+const POST_FIELD_SETS: {
+  access: Exclude<PostsAccess, 'none'>;
+  fields: string;
+}[] = [
+  {
+    access: 'full',
+    fields:
+      'id,message,created_time,permalink_url,full_picture,shares,reactions.summary(total_count).limit(0),comments.summary(total_count).limit(0)',
+  },
+  {
+    access: 'no_comments',
+    fields:
+      'id,message,created_time,permalink_url,full_picture,shares,reactions.summary(total_count).limit(0)',
+  },
+  {
+    access: 'basic',
+    fields: 'id,message,created_time,permalink_url,full_picture,shares',
+  },
+];
+
+/** Erreurs Meta de permission ou de fonctionnalité manquante : on se replie. */
+const PERMISSION_CODES = new Set([10, 200]);
 
 interface MetaErrorBody {
   error?: { message?: string; code?: number };
@@ -85,12 +117,7 @@ export class MetaPageClient {
       daily(DAILY_METRICS.views),
       daily(DAILY_METRICS.engagement),
       daily(DAILY_METRICS.newFollowers),
-      this.get<{ data: RawPagePost[] }>(`/${pageId}/posts`, {
-        fields:
-          'id,message,created_time,permalink_url,full_picture,shares,reactions.summary(total_count).limit(0),comments.summary(total_count).limit(0)',
-        limit: '100',
-        access_token: pageToken,
-      }),
+      this.getPosts(pageId, pageToken),
     ]);
 
     return {
@@ -100,7 +127,36 @@ export class MetaPageClient {
       engagement,
       newFollowers,
       posts: posts.data,
+      postsAccess: posts.access,
     };
+  }
+
+  /**
+   * 100 dernières publications, avec le plus de champs que Meta accepte :
+   * un refus de permission n'empêche jamais d'afficher le reste de la santé
+   * de la Page. Un token expiré (190) remonte.
+   */
+  private async getPosts(
+    pageId: string,
+    pageToken: string,
+  ): Promise<{ data: RawPagePost[]; access: PostsAccess }> {
+    for (const { access, fields } of POST_FIELD_SETS) {
+      try {
+        const result = await this.get<{ data: RawPagePost[] }>(
+          `/${pageId}/posts`,
+          { fields, limit: '100', access_token: pageToken },
+        );
+        return { data: result.data, access };
+      } catch (error) {
+        if (
+          !(error instanceof MetaApiError) ||
+          !PERMISSION_CODES.has(error.code ?? -1)
+        ) {
+          throw error;
+        }
+      }
+    }
+    return { data: [], access: 'none' };
   }
 
   private async firstAvailableDaily(
@@ -136,7 +192,13 @@ export class MetaPageClient {
           }));
         }
       } catch (error) {
-        if (!(error instanceof MetaApiError) || error.code !== 100) throw error;
+        // #100 : métrique retirée ; #10/#200 : non autorisée pour cette Page.
+        if (
+          !(error instanceof MetaApiError) ||
+          (error.code !== 100 && !PERMISSION_CODES.has(error.code ?? -1))
+        ) {
+          throw error;
+        }
       }
     }
     return [];
