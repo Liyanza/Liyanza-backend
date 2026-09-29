@@ -12,6 +12,7 @@ import {
   ForbiddenException,
   NotFoundException,
   InternalServerErrorException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 
 // Minimal typed shape of the PrismaService surface this test touches.
@@ -37,6 +38,7 @@ type MockedPrisma = {
   };
   campaign: {
     findFirst: jest.Mock;
+    findUniqueOrThrow: jest.Mock;
   };
   recommendation: {
     findMany: jest.Mock;
@@ -53,7 +55,7 @@ type MockedPrisma = {
 const buildTxClient = () => ({
   aiMessage: { create: jest.fn(), update: jest.fn() },
   aiConversation: { update: jest.fn() },
-  recommendation: { create: jest.fn() },
+  recommendation: { create: jest.fn(), deleteMany: jest.fn() },
 });
 
 describe('AssistantIService', () => {
@@ -110,6 +112,7 @@ describe('AssistantIService', () => {
             },
             campaign: {
               findFirst: jest.fn(),
+              findUniqueOrThrow: jest.fn(),
             },
             recommendation: {
               findMany: jest.fn(),
@@ -670,23 +673,28 @@ describe('AssistantIService', () => {
   });
 
   describe('getRecommandations', () => {
-    it('should return recommendations for a campaign', async () => {
+    it('should return recommendations from the most to the least urgent', async () => {
       const campaignId = 'camp-1';
-      const campaign = {
+      prisma.campaign.findFirst.mockResolvedValue({
         id: campaignId,
         launchedBy: { companyId: 'company-1' },
-      };
-      const recommendations = [
-        { id: 'rec-1', content: 'Do this', priority: 'high' },
-      ];
-      prisma.campaign.findFirst.mockResolvedValue(campaign);
-      prisma.recommendation.findMany.mockResolvedValue(recommendations);
+      });
+      prisma.recommendation.findMany.mockResolvedValue([
+        { id: 'rec-low', priority: 'low' },
+        { id: 'rec-high', priority: 'high' },
+        { id: 'rec-medium', priority: 'medium' },
+      ]);
 
       const result = await service.getRecommandations(campaignId, mockUser);
-      expect(result).toEqual(recommendations);
+      // Un tri SQL sur la chaîne aurait donné high, low, medium.
+      expect(result.map((r) => r.id)).toEqual([
+        'rec-high',
+        'rec-medium',
+        'rec-low',
+      ]);
       expect(prisma.recommendation.findMany).toHaveBeenCalledWith({
         where: { campaignId },
-        orderBy: { priority: 'asc' },
+        orderBy: { generatedAt: 'desc' },
       });
     });
 
@@ -699,41 +707,215 @@ describe('AssistantIService', () => {
   });
 
   describe('genererRecommandations', () => {
-    it('should generate and persist recommendations', async () => {
-      const campaignId = 'camp-1';
-      const campaign = {
-        id: campaignId,
-        name: 'Test',
-        objective: 'Reach',
-        plannedBudget: { toNumber: () => 1000 },
+    const decimal = (value: number) => ({ toNumber: () => value });
+
+    /** Campagne telle que la renvoie la requête de contexte. */
+    const fullCampaign = (overrides: Record<string, unknown> = {}) => ({
+      name: 'Promo rentrée',
+      type: 'DIGITAL',
+      objective: 'Vendre des fournitures',
+      status: 'IN_PROGRESS',
+      plannedBudget: decimal(150000),
+      actualBudget: decimal(0),
+      startDate: new Date('2026-09-20T00:00:00Z'),
+      endDate: new Date('2026-10-10T00:00:00Z'),
+      launchedBy: {
+        company: {
+          name: 'Librairie',
+          businessSector: 'Commerce',
+          address: 'Douala',
+        },
+      },
+      digitalDetails: {
+        objective: 'SALES',
+        customObjective: null,
+        ageMin: 25,
+        ageMax: 45,
+        targetGender: 'ALL',
+        targetLocations: ['Douala'],
+        targetInterests: ['Éducation'],
+        budgetAllocation: 'TOTAL',
+        metaCampaignId: '123',
+        channels: [{ platform: 'FACEBOOK' }],
+      },
+      digitalSimulations: [
+        {
+          simulatedAt: new Date('2026-09-19T10:00:00Z'),
+          predictedReach: 12000,
+          predictedCtr: 1.4,
+          predictedEngagementRate: null,
+          avgCpc: 45,
+          costPerAcquisition: 3000,
+          conversionRate: 2,
+          warnings: [],
+          scenarios: [
+            { strategy: 'balanced', isRecommended: false },
+            { strategy: 'focused', isRecommended: true },
+          ],
+          aiAnalysis: { summary: 'Bon potentiel.' },
+        },
+      ],
+      adObservation: {
+        spendXaf: 60000,
+        impressions: 40000,
+        reach: 9000,
+        clicks: 300,
+        conversions: 4,
+        collectedAt: new Date('2026-09-28T08:00:00Z'),
+      },
+      alerts: [{ type: 'CPC_HIGH', severity: 'CRITICAL', data: { cpc: 200 } }],
+      broadcasts: [
+        { status: 'BROADCASTED', scheduledAt: new Date('2026-09-21') },
+        { status: 'MISSED', scheduledAt: new Date('2026-09-22') },
+        { status: 'PLANNED', scheduledAt: new Date('2099-01-01') },
+      ],
+      installations: [
+        { status: 'INSTALLED', proof: { validationStatus: 'VALIDATED' } },
+        { status: 'INSTALLED', proof: { validationStatus: 'PENDING' } },
+        { status: 'PLANNED', proof: null },
+      ],
+      statistics: [
+        { indicator: 'scans', value: 12 },
+        { indicator: 'scans', value: 3 },
+      ],
+      recommendations: [{ title: null, content: 'Ancien conseil' }],
+      ...overrides,
+    });
+
+    beforeEach(() => {
+      prisma.campaign.findFirst.mockResolvedValue({
+        id: 'camp-1',
         launchedBy: { companyId: 'company-1' },
-      };
-      const iaResult = {
-        recommendations: [
-          { content: 'Rec1', priority: 'high' },
-          { content: 'Rec2', priority: 'medium' },
-        ],
-      };
-      const createdRecs = iaResult.recommendations.map((r, i) => ({
-        id: `rec-${i}`,
-        ...r,
-      }));
-
-      prisma.campaign.findFirst.mockResolvedValue(campaign);
-      iaEngine.generateRecommendations.mockResolvedValue(iaResult);
-      txClient.recommendation.create
-        .mockResolvedValueOnce(createdRecs[0])
-        .mockResolvedValueOnce(createdRecs[1]);
-
-      const result = await service.genererRecommandations(campaignId, mockUser);
-      expect(result).toEqual(createdRecs);
-      expect(iaEngine.generateRecommendations).toHaveBeenCalledWith({
-        campaignId: campaign.id,
-        campaignName: campaign.name,
-        objective: campaign.objective,
-        plannedBudget: 1000,
       });
-      expect(txClient.recommendation.create).toHaveBeenCalledTimes(2);
+    });
+
+    it('should send the full campaign context to the AI engine', async () => {
+      prisma.campaign.findUniqueOrThrow.mockResolvedValue(fullCampaign());
+      iaEngine.generateRecommendations.mockResolvedValue({
+        recommendations: [{ content: 'x', priority: 'high' }],
+      });
+      txClient.recommendation.create.mockResolvedValue({ id: 'rec-1' });
+
+      await service.genererRecommandations('camp-1', mockUser);
+
+      const context = iaEngine.generateRecommendations.mock.calls[0][0];
+      expect(context.campaign).toEqual({
+        name: 'Promo rentrée',
+        type: 'DIGITAL',
+        objective: 'Vendre des fournitures',
+        status: 'IN_PROGRESS',
+        plannedBudget: 150000,
+        startDate: '2026-09-20',
+        endDate: '2026-10-10',
+      });
+      expect(context.digital).toEqual(
+        expect.objectContaining({
+          objective: 'SALES',
+          locations: ['Douala'],
+          channels: ['FACEBOOK'],
+          linkedToFacebookAds: true,
+        }),
+      );
+      expect(context.digital).not.toHaveProperty('customObjective');
+      expect(context.simulation).toEqual(
+        expect.objectContaining({
+          predictedReach: 12000,
+          predictedEngagementRate: undefined,
+          recommendedStrategy: 'focused',
+          aiSummary: 'Bon potentiel.',
+        }),
+      );
+      expect(context.actual).toEqual(
+        expect.objectContaining({ spendXaf: 60000, clicks: 300 }),
+      );
+      expect(context.alerts).toEqual([
+        { type: 'CPC_HIGH', severity: 'CRITICAL', data: { cpc: 200 } },
+      ]);
+      expect(context.radio).toEqual({
+        planned: 1,
+        broadcasted: 1,
+        missed: 1,
+        cancelled: 0,
+        upcoming: 1,
+      });
+      expect(context.field).toEqual({
+        installations: 3,
+        byStatus: { INSTALLED: 2, PLANNED: 1 },
+        proofsValidated: 1,
+        proofsPending: 1,
+        proofsRejected: 0,
+      });
+      // Statistiques de la plus récente à la plus ancienne : la première gagne.
+      expect(context.statistics).toEqual({ scans: 12 });
+      expect(context.previousRecommendations).toEqual(['Ancien conseil']);
+    });
+
+    it('should leave out the blocks the campaign has no data for', async () => {
+      prisma.campaign.findUniqueOrThrow.mockResolvedValue(
+        fullCampaign({
+          type: 'RADIO',
+          digitalDetails: null,
+          digitalSimulations: [],
+          adObservation: null,
+          alerts: [],
+          broadcasts: [],
+          installations: [],
+          statistics: [],
+          recommendations: [],
+        }),
+      );
+      iaEngine.generateRecommendations.mockResolvedValue({
+        recommendations: [{ content: 'x', priority: 'low' }],
+      });
+      txClient.recommendation.create.mockResolvedValue({ id: 'rec-1' });
+
+      await service.genererRecommandations('camp-1', mockUser);
+
+      const context = iaEngine.generateRecommendations.mock.calls[0][0];
+      for (const key of ['digital', 'simulation', 'actual', 'radio', 'field']) {
+        expect(context).not.toHaveProperty(key);
+      }
+    });
+
+    it('should replace the previously generated recommendations, most urgent first', async () => {
+      prisma.campaign.findUniqueOrThrow.mockResolvedValue(fullCampaign());
+      iaEngine.generateRecommendations.mockResolvedValue({
+        recommendations: [
+          {
+            title: 'B',
+            content: 'Rec B',
+            priority: 'low',
+            category: 'creative',
+          },
+          {
+            title: 'A',
+            content: 'Rec A',
+            priority: 'high',
+            category: 'budget',
+          },
+        ],
+      });
+      txClient.recommendation.create.mockImplementation(
+        ({ data }: { data: Record<string, unknown> }) =>
+          Promise.resolve({ id: `rec-${String(data.title)}`, ...data }),
+      );
+
+      const result = await service.genererRecommandations('camp-1', mockUser);
+
+      expect(txClient.recommendation.deleteMany).toHaveBeenCalledWith({
+        where: { campaignId: 'camp-1', sourceMessageId: null },
+      });
+      expect(txClient.recommendation.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          title: 'A',
+          content: 'Rec A',
+          priority: 'high',
+          category: 'budget',
+          campaignId: 'camp-1',
+          companyId: 'company-1',
+        }) as Record<string, unknown>,
+      });
+      expect(result.map((r) => r.id)).toEqual(['rec-A', 'rec-B']);
     });
 
     it('should throw if campaign not found', async () => {
@@ -743,19 +925,14 @@ describe('AssistantIService', () => {
       ).rejects.toThrow(NotFoundException);
     });
 
-    it('should throw InternalServerErrorException if IA engine fails', async () => {
-      const campaign = {
-        id: 'camp-1',
-        name: 'Test',
-        objective: 'Reach',
-        plannedBudget: { toNumber: () => 1000 },
-        launchedBy: { companyId: 'company-1' },
-      };
-      prisma.campaign.findFirst.mockResolvedValue(campaign);
+    it('should answer 503 and keep the old recommendations if the IA engine fails', async () => {
+      prisma.campaign.findUniqueOrThrow.mockResolvedValue(fullCampaign());
       iaEngine.generateRecommendations.mockRejectedValue(new Error('IA down'));
+
       await expect(
         service.genererRecommandations('camp-1', mockUser),
-      ).rejects.toThrow(InternalServerErrorException);
+      ).rejects.toThrow(ServiceUnavailableException);
+      expect(txClient.recommendation.deleteMany).not.toHaveBeenCalled();
     });
   });
 });

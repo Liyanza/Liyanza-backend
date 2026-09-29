@@ -106,18 +106,92 @@ describe('IAEngineHttpClient', () => {
     );
   });
 
-  it('should keep generating recommendations locally (no chatbot endpoint for them yet)', async () => {
-    const client = new IAEngineHttpClient(http, configService);
+  describe('recommendations (POST /campaign/recommendations)', () => {
+    const context = {
+      today: '2026-09-29',
+      campaign: {
+        name: 'Promo rentrée',
+        type: 'DIGITAL' as const,
+        objective: 'Vendre des fournitures',
+        status: 'IN_PROGRESS',
+        plannedBudget: 150000,
+        startDate: '2026-09-20',
+        endDate: '2026-10-10',
+      },
+      alerts: [],
+      statistics: {},
+      previousRecommendations: [],
+    };
 
-    const result = await client.generateRecommendations({
-      campaignId: 'camp-1',
-      campaignName: 'Test',
-      objective: 'Reach',
-      plannedBudget: 1000,
+    it('should POST the campaign context and map title/detail to title/content', async () => {
+      post.mockReturnValue(
+        of({
+          data: {
+            recommendations: [
+              {
+                title: 'Resserrer sur Douala',
+                detail: 'Le coût par clic dépasse la prévision.',
+                priority: 'high',
+                category: 'audience',
+              },
+              { title: 'Sans détail', detail: '  ', priority: 'low' },
+              {
+                title: 'Tester une vidéo',
+                detail: 'Les visuels fixes s’essoufflent.',
+                priority: 'urgent',
+              },
+            ],
+          },
+        }),
+      );
+      const client = new IAEngineHttpClient(http, configService);
+
+      await expect(client.generateRecommendations(context)).resolves.toEqual({
+        recommendations: [
+          {
+            title: 'Resserrer sur Douala',
+            content: 'Le coût par clic dépasse la prévision.',
+            priority: 'high',
+            category: 'audience',
+          },
+          {
+            title: 'Tester une vidéo',
+            content: 'Les visuels fixes s’essoufflent.',
+            priority: 'medium',
+            category: undefined,
+          },
+        ],
+      });
+      expect(post).toHaveBeenCalledWith(
+        'https://ia.example.com/campaign/recommendations',
+        context,
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            'X-Internal-Token': 'a'.repeat(64),
+          }) as Record<string, string>,
+        }),
+      );
     });
 
-    expect(result.recommendations.length).toBeGreaterThan(0);
-    expect(post).not.toHaveBeenCalled();
+    it('should reject rather than invent recommendations when none is usable', async () => {
+      post.mockReturnValue(of({ data: { recommendations: [] } }));
+      const client = new IAEngineHttpClient(http, configService);
+
+      await expect(client.generateRecommendations(context)).rejects.toThrow(
+        'IA service returned no recommendation',
+      );
+    });
+
+    it('should surface the service failure', async () => {
+      post.mockReturnValue(
+        throwError(() => new AxiosError('timeout exceeded', 'ECONNABORTED')),
+      );
+      const client = new IAEngineHttpClient(http, configService);
+
+      await expect(client.generateRecommendations(context)).rejects.toThrow(
+        'IA service unreachable (ECONNABORTED)',
+      );
+    });
   });
 
   describe('streaming (POST /ask/stream)', () => {

@@ -42,19 +42,26 @@ export class IAEngineMock implements IAEngineInterface {
     params: GenerateRecommendationsParams,
   ): Promise<GenerateRecommendationsResult> {
     await new Promise((resolve) => setTimeout(resolve, 500));
+    const name = params.campaign.name;
     return {
       recommendations: [
         {
-          content: `Recommendation 1 for ${params.campaignName}: increase radio budget.`,
+          title: `Suivre les résultats de ${name}`,
+          content: 'Recommandation de démonstration (Mock IA).',
           priority: 'high',
+          category: 'measurement',
         },
         {
-          content: `Recommendation 2: target 18-25 age group.`,
+          title: "Resserrer l'audience",
+          content: 'Recommandation de démonstration (Mock IA).',
           priority: 'medium',
+          category: 'audience',
         },
         {
-          content: `Recommendation 3: add more visuals.`,
+          title: 'Tester un second visuel',
+          content: 'Recommandation de démonstration (Mock IA).',
           priority: 'low',
+          category: 'creative',
         },
       ],
     };
