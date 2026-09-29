@@ -179,6 +179,7 @@ model Campaign {
   digitalDetails     DigitalCampaignDetails? // ← BACK-501
   digitalSimulations DigitalSimulation[] // ← BACK-501
   adObservation      AdPerformanceObservation?
+  alerts             CampaignAlert[]
 
   @@index([launchedById])
 }
@@ -710,4 +711,38 @@ model AdPerformanceObservation {
 
   @@index([objective, city])
   @@index([companyId, objective])
+}
+
+enum CampaignAlertType {
+  BUDGET_PACING_FAST
+  BUDGET_PACING_SLOW
+  CPC_HIGH
+  CTR_LOW
+  AUDIENCE_FATIGUE
+  NO_CONVERSIONS
+}
+
+enum CampaignAlertSeverity {
+  WARNING
+  CRITICAL
+}
+
+/// Alerte « intelligente » sur une campagne Facebook Ads reliée (budget
+/// dépensé trop vite, coût par clic trop élevé, audience lassée…), détectée
+/// à partir de ses résultats réels (CampaignAlertsService). Une seule alerte
+/// ouverte par type et par campagne ; `resolvedAt` est renseigné dès que le
+/// problème disparaît. `data` porte les chiffres qui l'ont déclenchée.
+model CampaignAlert {
+  id         String                @id @default(cuid())
+  type       CampaignAlertType
+  severity   CampaignAlertSeverity
+  data       Json                  @default("{}")
+  resolvedAt DateTime?
+  createdAt  DateTime              @default(now())
+  updatedAt  DateTime              @updatedAt
+
+  campaignId String
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@index([campaignId, resolvedAt])
 }

@@ -6,6 +6,8 @@ import {
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
+import { Cron } from '@nestjs/schedule';
+import type { Campaign, DigitalCampaignDetails } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
 import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
@@ -21,6 +23,13 @@ import {
 import { DigitalCampaignsService } from '../digital-campaigns.service';
 import { comparePerformance } from './performance-comparison';
 import { LocalBenchmarksService } from './local-benchmarks.service';
+import { CampaignAlertsService } from './campaign-alerts.service';
+import { detectAlerts } from './alert-rules';
+
+interface CachedInsights {
+  insights: MetaCampaignInsights;
+  fetchedAt: string;
+}
 
 /** Résultats Meta mis en cache : l'API est lente et limitée en appels. */
 const INSIGHTS_TTL_SECONDS = 30 * 60;
@@ -52,6 +61,7 @@ export class CampaignPerformanceService {
     private readonly socialAccounts: SocialAccountsService,
     private readonly metaAds: MetaAdsClient,
     private readonly localBenchmarks: LocalBenchmarksService,
+    private readonly alerts: CampaignAlertsService,
   ) {}
 
   /** Campagnes Facebook Ads que l'entreprise peut relier. */
@@ -127,8 +137,9 @@ export class CampaignPerformanceService {
   }
 
   /**
-   * Comparaison prévu/réel. `{ linked: false }` tant qu'aucune campagne
-   * Facebook Ads n'est reliée. `refresh` ignore le cache (30 min).
+   * Comparaison prévu/réel et alertes ouvertes. `{ linked: false }` tant
+   * qu'aucune campagne Facebook Ads n'est reliée. `refresh` ignore le cache
+   * (30 min).
    */
   async getPerformance(
     campaignId: string,
@@ -144,58 +155,26 @@ export class CampaignPerformanceService {
     });
     if (!details?.metaCampaignId) return { linked: false as const };
 
-    const key = this.cacheKey(campaign.id);
-    let cached: { insights: MetaCampaignInsights; fetchedAt: string } | null =
-      null;
+    let cached: CachedInsights | null = null;
     if (!refresh) {
-      const raw = await this.redis.get(key);
-      cached = raw ? (JSON.parse(raw) as typeof cached) : null;
+      const raw = await this.redis.get(this.cacheKey(campaign.id));
+      cached = raw ? (JSON.parse(raw) as CachedInsights) : null;
     }
+    const simulation = await this.latestSimulation(campaign.id);
     if (!cached) {
       const token = await this.adsToken(user.companyId!);
       try {
-        cached = {
-          insights: await this.metaAds.getCampaignInsights(
-            token,
-            details.metaCampaignId,
-          ),
-          fetchedAt: new Date().toISOString(),
-        };
+        cached = await this.refreshCampaign(
+          campaign,
+          details,
+          user.companyId!,
+          token,
+          simulation,
+        );
       } catch (error) {
         this.rethrow(error);
       }
-      await this.redis.set(key, JSON.stringify(cached), INSIGHTS_TTL_SECONDS);
-      // Résultats frais : ils alimentent aussi les références de coûts locales.
-      await this.localBenchmarks
-        .record({
-          campaignId: campaign.id,
-          companyId: user.companyId!,
-          objective: details.objective,
-          locations: details.targetLocations,
-          currency: details.metaAdCurrency ?? 'XAF',
-          totals: cached.insights.totals,
-        })
-        .catch((error: unknown) =>
-          this.logger.warn(
-            `Benchmark observation not saved: ${error instanceof Error ? error.message : String(error)}`,
-          ),
-        );
     }
-
-    const simulation = await this.prisma.digitalSimulation.findFirst({
-      where: { campaignId: campaign.id },
-      orderBy: { simulatedAt: 'desc' },
-      select: {
-        id: true,
-        simulatedAt: true,
-        predictedReach: true,
-        predictedCtr: true,
-        predictedRoas: true,
-        avgCpc: true,
-        costPerAcquisition: true,
-        scenarios: true,
-      },
-    });
 
     return {
       linked: true as const,
@@ -209,17 +188,151 @@ export class CampaignPerformanceService {
         ? { id: simulation.id, simulatedAt: simulation.simulatedAt }
         : null,
       fetchedAt: cached.fetchedAt,
-      comparison: comparePerformance({
-        objective: details.objective,
-        plannedBudget: campaign.plannedBudget.toNumber(),
-        startDate: campaign.startDate,
-        endDate: campaign.endDate,
-        now: new Date(),
-        currency: details.metaAdCurrency ?? 'XAF',
-        insights: cached.insights,
-        simulation,
-      }),
+      comparison: this.compare(campaign, details, cached.insights, simulation),
+      alerts: await this.alerts.listActive(campaign.id),
     };
+  }
+
+  /**
+   * Chaque matin (7 h au Cameroun) : relit les résultats de toutes les
+   * campagnes reliées — même si personne n'ouvre leur page — pour alimenter
+   * les références de coûts locales et lever les alertes. Une campagne en
+   * erreur (token expiré, campagne supprimée…) n'arrête jamais les autres.
+   */
+  @Cron('0 6 * * *')
+  async refreshAllLinked(): Promise<void> {
+    const linked = await this.prisma.digitalCampaignDetails.findMany({
+      where: { metaCampaignId: { not: null } },
+      include: {
+        campaign: { include: { launchedBy: { select: { companyId: true } } } },
+      },
+    });
+
+    const tokens = new Map<string, string | null>();
+    let refreshed = 0;
+    for (const { campaign, ...details } of linked) {
+      const companyId = campaign.launchedBy.companyId;
+      if (!companyId) continue;
+      if (!tokens.has(companyId)) {
+        tokens.set(
+          companyId,
+          await this.socialAccounts.getAdsAccessToken(companyId),
+        );
+      }
+      const token = tokens.get(companyId);
+      if (!token) continue;
+      try {
+        await this.refreshCampaign(
+          campaign,
+          details,
+          companyId,
+          token,
+          await this.latestSimulation(campaign.id),
+        );
+        refreshed++;
+      } catch (error) {
+        this.logger.warn(
+          `Daily refresh skipped campaign ${campaign.id}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    }
+    this.logger.log(
+      `Linked campaigns refreshed: ${refreshed}/${linked.length}`,
+    );
+  }
+
+  /**
+   * Lit les résultats frais d'une campagne sur Meta, les met en cache, en
+   * tire une observation pour les références locales et réévalue les
+   * alertes. Lève l'erreur Meta éventuelle.
+   */
+  private async refreshCampaign(
+    campaign: Campaign,
+    details: DigitalCampaignDetails,
+    companyId: string,
+    token: string,
+    simulation: Awaited<ReturnType<typeof this.latestSimulation>>,
+  ): Promise<CachedInsights> {
+    const cached: CachedInsights = {
+      insights: await this.metaAds.getCampaignInsights(
+        token,
+        details.metaCampaignId!,
+      ),
+      fetchedAt: new Date().toISOString(),
+    };
+    await this.redis.set(
+      this.cacheKey(campaign.id),
+      JSON.stringify(cached),
+      INSIGHTS_TTL_SECONDS,
+    );
+
+    // Compléments : leur échec ne doit jamais masquer les résultats.
+    await this.localBenchmarks
+      .record({
+        campaignId: campaign.id,
+        companyId,
+        objective: details.objective,
+        locations: details.targetLocations,
+        currency: details.metaAdCurrency ?? 'XAF',
+        totals: cached.insights.totals,
+      })
+      .catch((error: unknown) =>
+        this.logger.warn(
+          `Benchmark observation not saved: ${error instanceof Error ? error.message : String(error)}`,
+        ),
+      );
+    await this.alerts
+      .evaluate(
+        campaign,
+        companyId,
+        detectAlerts(
+          this.compare(campaign, details, cached.insights, simulation),
+          cached.insights,
+        ),
+      )
+      .catch((error: unknown) =>
+        this.logger.warn(
+          `Campaign alerts not evaluated: ${error instanceof Error ? error.message : String(error)}`,
+        ),
+      );
+    return cached;
+  }
+
+  private compare(
+    campaign: Campaign,
+    details: DigitalCampaignDetails,
+    insights: MetaCampaignInsights,
+    simulation: Awaited<ReturnType<typeof this.latestSimulation>>,
+  ) {
+    return comparePerformance({
+      objective: details.objective,
+      plannedBudget: campaign.plannedBudget.toNumber(),
+      startDate: campaign.startDate,
+      endDate: campaign.endDate,
+      now: new Date(),
+      currency: details.metaAdCurrency ?? 'XAF',
+      insights,
+      simulation,
+    });
+  }
+
+  private latestSimulation(campaignId: string) {
+    return this.prisma.digitalSimulation.findFirst({
+      where: { campaignId },
+      orderBy: { simulatedAt: 'desc' },
+      select: {
+        id: true,
+        simulatedAt: true,
+        predictedReach: true,
+        predictedCtr: true,
+        predictedRoas: true,
+        avgCpc: true,
+        costPerAcquisition: true,
+        scenarios: true,
+      },
+    });
   }
 
   private async requireDetails(campaignId: string) {

@@ -1,12 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { Cron, CronExpression } from '@nestjs/schedule';
 import { DigitalObjective } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
-import { SocialAccountsService } from '../../social-accounts/social-accounts.service';
-import {
-  MetaAdsClient,
-  type MetaInsightsRow,
-} from '../../social-accounts/clients/meta-ads.client';
+import type { MetaInsightsRow } from '../../social-accounts/clients/meta-ads.client';
 import type { LocalBenchmark } from '../clients/digital-simulation-engine.interface';
 import { observedTotals } from './performance-comparison';
 
@@ -70,17 +65,15 @@ export function aggregate(
 
 /**
  * Références de coûts locales : les résultats réels des campagnes Facebook
- * Ads reliées (« Prévu vs réel ») recalibrent le moteur de simulation.
+ * Ads reliées (« Prévu vs réel ») recalibrent le moteur de simulation. Les
+ * observations sont enregistrées par CampaignPerformanceService, à chaque
+ * lecture fraîche et chaque matin (refreshAllLinked).
  */
 @Injectable()
 export class LocalBenchmarksService {
   private readonly logger = new Logger(LocalBenchmarksService.name);
 
-  constructor(
-    private readonly prisma: PrismaService,
-    private readonly socialAccounts: SocialAccountsService,
-    private readonly metaAds: MetaAdsClient,
-  ) {}
+  constructor(private readonly prisma: PrismaService) {}
 
   /** Enregistre (ou met à jour) les totaux réels d'une campagne. */
   async record(input: {
@@ -152,65 +145,5 @@ export class LocalBenchmarksService {
       return aggregate(rows, 'objective', null);
     }
     return null;
-  }
-
-  /**
-   * Chaque nuit : met à jour les totaux de toutes les campagnes reliées, même
-   * si personne n'a ouvert leur page de résultats. Une erreur (token expiré,
-   * campagne supprimée…) n'arrête jamais la collecte des autres.
-   */
-  @Cron(CronExpression.EVERY_DAY_AT_3AM)
-  async collectAll(): Promise<void> {
-    const linked = await this.prisma.digitalCampaignDetails.findMany({
-      where: { metaCampaignId: { not: null } },
-      select: {
-        objective: true,
-        targetLocations: true,
-        metaCampaignId: true,
-        metaAdCurrency: true,
-        campaign: {
-          select: { id: true, launchedBy: { select: { companyId: true } } },
-        },
-      },
-    });
-
-    const tokens = new Map<string, string | null>();
-    let recorded = 0;
-    for (const details of linked) {
-      const companyId = details.campaign.launchedBy.companyId;
-      if (!companyId || !details.metaCampaignId) continue;
-      if (!tokens.has(companyId)) {
-        tokens.set(
-          companyId,
-          await this.socialAccounts.getAdsAccessToken(companyId),
-        );
-      }
-      const token = tokens.get(companyId);
-      if (!token) continue;
-      try {
-        const insights = await this.metaAds.getCampaignInsights(
-          token,
-          details.metaCampaignId,
-        );
-        await this.record({
-          campaignId: details.campaign.id,
-          companyId,
-          objective: details.objective,
-          locations: details.targetLocations,
-          currency: details.metaAdCurrency ?? 'XAF',
-          totals: insights.totals,
-        });
-        recorded++;
-      } catch (error) {
-        this.logger.warn(
-          `Benchmark collection skipped campaign ${details.campaign.id}: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-        );
-      }
-    }
-    this.logger.log(
-      `Local benchmarks: ${recorded}/${linked.length} campaigns updated`,
-    );
   }
 }
