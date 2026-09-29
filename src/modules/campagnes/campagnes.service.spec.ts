@@ -120,6 +120,28 @@ describe('CampagnesService', () => {
         }),
       );
     });
+
+    it('should search by name and keep campaigns still running in the period', async () => {
+      prisma.campaign.findMany.mockResolvedValue([]);
+      prisma.campaign.count.mockResolvedValue(0);
+      const before = Date.now();
+
+      await service.findAll(user, 1, 10, undefined, undefined, {
+        search: '  promo ',
+        period: '30d',
+      });
+
+      const [[args]] = prisma.campaign.findMany.mock.calls as [
+        [{ where: { name: unknown; endDate: { gte: Date } } }],
+      ];
+      expect(args.where.name).toEqual({
+        contains: 'promo',
+        mode: 'insensitive',
+      });
+      const since = args.where.endDate.gte.getTime();
+      expect(before - since).toBeGreaterThanOrEqual(30 * 86400000 - 1000);
+      expect(before - since).toBeLessThanOrEqual(30 * 86400000 + 1000);
+    });
   });
 
   describe('update', () => {

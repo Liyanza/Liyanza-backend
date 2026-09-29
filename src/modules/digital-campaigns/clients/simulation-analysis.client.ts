@@ -21,6 +21,7 @@ export interface SimulationAnalysis {
 export interface SimulationAnalysisInput {
   campaignName?: string;
   objective: string;
+  customObjective?: string;
   budget: { amount: number; allocation?: string };
   startDate?: string;
   endDate?: string;

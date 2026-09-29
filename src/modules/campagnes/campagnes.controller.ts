@@ -63,8 +63,11 @@ export class CampagnesController {
     @Request() req: AuthenticatedRequest,
     @Query() query: CampagneQueryDto,
   ) {
-    const { page = 1, limit = 10, status, type } = query;
-    return this.campagnesService.findAll(req.user, page, limit, status, type);
+    const { page = 1, limit = 10, status, type, search, period } = query;
+    return this.campagnesService.findAll(req.user, page, limit, status, type, {
+      search,
+      period,
+    });
   }
 
   @Get(':id')

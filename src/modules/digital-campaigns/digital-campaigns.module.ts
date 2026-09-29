@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 import { HttpModule } from '@nestjs/axios';
 import { DigitalCampaignsController } from './digital-campaigns.controller';
+import { CampaignDescriptionController } from './campaign-description.controller';
+import { CampaignDescriptionClient } from './clients/campaign-description.client';
 import { DigitalCampaignsService } from './digital-campaigns.service';
 import { PrismaModule } from '../prisma/prisma.module';
 import { DigitalSimulationEngineHeuristic } from './clients/digital-simulation-engine.heuristic';
@@ -20,12 +22,13 @@ import { SocialAccountsModule } from '../social-accounts/social-accounts.module'
     SocialAccountsModule,
     HttpModule.register({ timeout: 45_000 }),
   ],
-  controllers: [DigitalCampaignsController],
+  controllers: [DigitalCampaignsController, CampaignDescriptionController],
   providers: [
     DigitalCampaignsService,
     CampaignPerformanceService,
     LocalBenchmarksService,
     SimulationAnalysisClient,
+    CampaignDescriptionClient,
     {
       provide: DIGITAL_SIMULATION_ENGINE_TOKEN,
       useClass: DigitalSimulationEngineHeuristic,

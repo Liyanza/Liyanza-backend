@@ -63,6 +63,7 @@ export class DigitalCampaignsService {
       create: {
         campaignId: campaign.id,
         objective: dto.objective,
+        customObjective: dto.customObjective?.trim() || null,
         ageMin: dto.ageMin,
         ageMax: dto.ageMax,
         targetGender: dto.targetGender,
@@ -72,6 +73,7 @@ export class DigitalCampaignsService {
       },
       update: {
         objective: dto.objective,
+        customObjective: dto.customObjective?.trim() || null,
         ageMin: dto.ageMin,
         ageMax: dto.ageMax,
         targetGender: dto.targetGender,
@@ -278,6 +280,9 @@ export class DigitalCampaignsService {
 
     const parameters = {
       objective: details.objective,
+      ...(details.customObjective && {
+        customObjective: details.customObjective,
+      }),
       budget: {
         amount: campaign.plannedBudget.toNumber(),
         allocation: details.budgetAllocation,
@@ -468,6 +473,9 @@ export class DigitalCampaignsService {
     return this.simulationAnalysis.analyze({
       campaignName: campaign.name,
       objective: parameters.objective,
+      ...(parameters.customObjective && {
+        customObjective: parameters.customObjective,
+      }),
       budget: {
         amount: parameters.budget.amount,
         allocation: parameters.budget.allocation,

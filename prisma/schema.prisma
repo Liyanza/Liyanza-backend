@@ -514,6 +514,9 @@ model Media {
 model DigitalCampaignDetails {
   id        String           @id @default(cuid())
   objective DigitalObjective
+  /// Objectif formulé par l'utilisateur (« Ajouter un objectif »), en plus du
+  /// type d'optimisation `objective` le plus proche, qui pilote le moteur.
+  customObjective String?
 
   // Audience — démographie
   ageMin       Int
