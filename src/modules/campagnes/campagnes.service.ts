@@ -67,6 +67,7 @@ export class CampagnesService {
     limit: number,
     status?: CampaignStatus,
     type?: CampaignType,
+    filters: { search?: string; period?: '7d' | '30d' | '90d' } = {},
   ) {
     if (!user.companyId) {
       throw new ForbiddenException(
@@ -85,6 +86,15 @@ export class CampagnesService {
     }
     if (type) {
       where.type = type;
+    }
+    const search = filters.search?.trim();
+    if (search) {
+      where.name = { contains: search, mode: 'insensitive' };
+    }
+    if (filters.period) {
+      // Campagne encore en cours pendant la période : terminée après son début.
+      const days = { '7d': 7, '30d': 30, '90d': 90 }[filters.period];
+      where.endDate = { gte: new Date(Date.now() - days * 86400000) };
     }
 
     const [items, total] = await Promise.all([

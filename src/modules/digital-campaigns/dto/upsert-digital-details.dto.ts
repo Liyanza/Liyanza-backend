@@ -8,6 +8,7 @@ import {
   ArrayMaxSize,
   IsString,
   MaxLength,
+  IsOptional,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { BudgetAllocationType, DigitalObjective } from '@prisma/client';
@@ -19,6 +20,15 @@ import { BudgetAllocationType, DigitalObjective } from '@prisma/client';
 export class UpsertDigitalDetailsDto {
   @IsEnum(DigitalObjective)
   objective!: DigitalObjective;
+
+  /**
+   * Objectif formulé librement (« Ajouter un objectif »). `objective` reste
+   * obligatoire : c'est le type d'optimisation le plus proche.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  customObjective?: string;
 
   // 13 ans : âge minimum autorisé par les CGU Meta Ads pour le ciblage
   // publicitaire — reflète une contrainte de la plateforme cible, pas un

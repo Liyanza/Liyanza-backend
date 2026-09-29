@@ -190,6 +190,46 @@ describe('DigitalCampaignsService', () => {
         ),
       ).rejects.toThrow(BadRequestException);
     });
+
+    it('should store a trimmed custom objective, and clear it when empty', async () => {
+      prisma.campaign.findFirst.mockResolvedValue(digitalCampaign);
+      const dto = {
+        objective: DigitalObjective.LEADS,
+        ageMin: 18,
+        ageMax: 45,
+        targetGender: 'ALL',
+        targetLocations: [],
+        targetInterests: [],
+        budgetAllocation: BudgetAllocationType.TOTAL,
+      };
+
+      await service.upsertDetails(
+        'camp-1',
+        { ...dto, customObjective: '  Remplir la salle le samedi ' },
+        user,
+      );
+      expect(prisma.digitalCampaignDetails.upsert).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          create: expect.objectContaining({
+            customObjective: 'Remplir la salle le samedi',
+          }) as Record<string, unknown>,
+        }),
+      );
+
+      await service.upsertDetails(
+        'camp-1',
+        { ...dto, customObjective: ' ' },
+        user,
+      );
+      expect(prisma.digitalCampaignDetails.upsert).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          update: expect.objectContaining({ customObjective: null }) as Record<
+            string,
+            unknown
+          >,
+        }),
+      );
+    });
   });
 
   describe('selectChannels', () => {

@@ -1,4 +1,4 @@
-import { IsEnum, IsOptional } from 'class-validator';
+import { IsEnum, IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
 import { CampaignStatus, CampaignType } from '@prisma/client';
 import { PaginationQueryDto } from '../../../common/dto/pagination-query.dto';
 
@@ -31,4 +31,15 @@ export class CampagneQueryDto extends PaginationQueryDto {
   @IsOptional()
   @IsEnum(CampaignType)
   type?: CampaignType;
+
+  /** Recherche dans le nom de la campagne (insensible à la casse). */
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  search?: string;
+
+  /** Campagnes actives (non terminées) sur les N derniers jours. */
+  @IsOptional()
+  @IsIn(['7d', '30d', '90d'])
+  period?: '7d' | '30d' | '90d';
 }

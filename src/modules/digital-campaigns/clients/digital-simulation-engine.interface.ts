@@ -30,6 +30,8 @@ export interface DigitalSimulationChannelInput {
 
 export interface DigitalSimulationParameters {
   objective: DigitalObjective;
+  /** Objectif formulé par l'utilisateur (informatif, pour l'analyse IA). */
+  customObjective?: string;
   budget: { amount: number; allocation: BudgetAllocationType };
   audience: {
     ageMin: number;
