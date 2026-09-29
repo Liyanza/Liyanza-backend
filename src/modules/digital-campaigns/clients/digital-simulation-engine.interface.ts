@@ -77,7 +77,24 @@ export interface DigitalSimulationScenarioSnapshot {
   predictedClicks: number;
   predictedConversions: number;
   predictedRoas: number;
+  /**
+   * Détail complet du scénario (même budget, stratégie de ciblage
+   * différente) : le site l'affiche quand on clique sur le scénario.
+   * Absent des simulations enregistrées avant l'ajout des stratégies.
+   */
+  strategy?: ScenarioStrategy;
+  description?: string;
+  predictedCtr?: number;
+  predictedEngagementRate?: number;
+  avgCpc?: number;
+  costPerAcquisition?: number;
+  conversionRate?: number;
+  channelBreakdown?: DigitalSimulationChannelSnapshot[];
+  weeklySeries?: DigitalSimulationWeekSnapshot[];
 }
+
+/** balanced : réglages de l'utilisateur ; broad : audience élargie ; focused : ciblage resserré. */
+export type ScenarioStrategy = 'balanced' | 'broad' | 'focused';
 
 /**
  * Détail du scénario recommandé pour un canal réellement sélectionné —

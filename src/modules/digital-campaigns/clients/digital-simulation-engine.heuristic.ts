@@ -9,6 +9,7 @@ import {
   DigitalSimulationScenarioSnapshot,
   DigitalSimulationWeekSnapshot,
   LocalBenchmark,
+  ScenarioStrategy,
 } from './digital-simulation-engine.interface';
 import {
   DIGITAL_SIMULATION_BENCHMARKS,
@@ -43,6 +44,86 @@ const OVERLAP_DISCOUNT_MULTI_CHANNEL = 0.85;
 // Montée en charge hebdomadaire (démarrage progressif, pic en milieu de
 // période) — 5 points fixes faute de durée de campagne en entrée (§6.2).
 const WEEKLY_RAMP = [0.12, 0.19, 0.24, 0.24, 0.21];
+
+/**
+ * Scénarios comparés : même budget, stratégie de ciblage différente.
+ * `breadth` agit sur la portée atteignable, `ctr` et `conversion` sur la
+ * pertinence : une audience plus large coûte moins cher par personne mais
+ * clique et convertit moins, une audience resserrée l'inverse.
+ */
+const SCENARIO_VARIANTS: {
+  id: string;
+  strategy: ScenarioStrategy;
+  label: string;
+  description: string;
+  breadth: number;
+  ctr: number;
+  conversion: number;
+}[] = [
+  {
+    id: 'A',
+    strategy: 'balanced',
+    label: 'Équilibré',
+    description:
+      "Vos réglages tels quels : âge, genre, centres d'intérêt et zones choisis.",
+    breadth: 1,
+    ctr: 1,
+    conversion: 1,
+  },
+  {
+    id: 'B',
+    strategy: 'broad',
+    label: 'Audience élargie',
+    description:
+      'Ciblage plus large (âges, intérêts et zones élargis) : plus de personnes touchées, moins cher par personne, mais moins de clics et de conversions par personne.',
+    breadth: 1.35,
+    ctr: 0.85,
+    conversion: 0.8,
+  },
+  {
+    id: 'C',
+    strategy: 'focused',
+    label: 'Ciblage resserré',
+    description:
+      'Ciblage plus précis sur le cœur de cible : moins de personnes touchées, mais davantage de clics et de conversions par personne.',
+    breadth: 0.7,
+    ctr: 1.2,
+    conversion: 1.25,
+  },
+];
+
+type PrimaryMetric =
+  'predictedReach' | 'predictedClicks' | 'predictedConversions';
+
+/** Ce que l'objectif cherche à maximiser : il désigne le scénario recommandé. */
+function primaryMetric(
+  objective: DigitalSimulationParameters['objective'],
+): PrimaryMetric {
+  switch (objective) {
+    case 'AWARENESS':
+      return 'predictedReach';
+    case 'ENGAGEMENT':
+    case 'TRAFFIC':
+      return 'predictedClicks';
+    default:
+      // LEADS, CONVERSION, SALES, conversations… : des conversions.
+      return 'predictedConversions';
+  }
+}
+
+interface ScenarioPlan {
+  predictedReach: number;
+  predictedClicks: number;
+  predictedConversions: number;
+  predictedEngagementRate: number;
+  predictedRoas: number;
+  predictedCtr: number;
+  avgCpc: number;
+  costPerAcquisition: number;
+  conversionRate: number;
+  channelBreakdown: DigitalSimulationChannelSnapshot[];
+  weeklySeries: DigitalSimulationWeekSnapshot[];
+}
 
 interface ChannelEstimate {
   platform: 'FACEBOOK' | 'INSTAGRAM';
@@ -85,10 +166,77 @@ export class DigitalSimulationEngineHeuristic implements DigitalSimulationEngine
       );
     }
 
-    const seed = `${params.objective}:${params.budget.amount}:${params.budget.allocation}`;
-    const warnings: string[] = [];
+    const warnings = params.channels
+      .filter((channel) => !channel.metrics)
+      .map((channel) =>
+        channel.accountLinked
+          ? `Les statistiques du compte ${channel.platform} lié ne sont pas encore synchronisées — la prévision utilise les références de marché. Resynchronisez le compte depuis Mon entreprise puis relancez la simulation.`
+          : `Aucune métrique réelle disponible pour ${channel.platform} — connectez le compte social correspondant pour une prévision plus précise.`,
+      );
 
-    const breadth = this.audienceBreadthScore(params.audience);
+    // Chaque scénario est calculé en entier ; le recommandé est celui qui
+    // maximise ce que l'objectif cherche (portée, clics ou conversions).
+    const metric = primaryMetric(params.objective);
+    const plans = SCENARIO_VARIANTS.map((variant) => ({
+      variant,
+      plan: this.computePlan(params, variant),
+    }));
+    const best = Math.max(...plans.map((p) => p.plan[metric]), 1);
+    const scored = plans.map((p) => ({
+      ...p,
+      score: Math.round(55 + 40 * (p.plan[metric] / best)),
+    }));
+    // À égalité, les réglages de l'utilisateur (A, en tête) l'emportent.
+    const recommended = scored.reduce((top, p) =>
+      p.score > top.score ? p : top,
+    );
+
+    const scenarios: DigitalSimulationScenarioSnapshot[] = scored.map(
+      ({ variant, plan, score }) => ({
+        id: variant.id,
+        label: variant.label,
+        strategy: variant.strategy,
+        description: variant.description,
+        isRecommended: variant.id === recommended.variant.id,
+        score,
+        ...plan,
+      }),
+    );
+
+    const top = recommended.plan;
+    const result = {
+      predictedReach: top.predictedReach,
+      predictedEngagementRate: top.predictedEngagementRate,
+      predictedCtr: top.predictedCtr,
+      predictedRoas: top.predictedRoas,
+      warnings,
+      avgCpc: top.avgCpc,
+      costPerAcquisition: top.costPerAcquisition,
+      conversionRate: top.conversionRate,
+      scenarios,
+      channelBreakdown: top.channelBreakdown,
+      weeklySeries: top.weeklySeries,
+    };
+
+    return Promise.resolve({
+      ...result,
+      narrativeSummary: this.buildNarrativeSummary(
+        params,
+        result,
+        top.channelBreakdown,
+      ),
+    });
+  }
+
+  /** Résultats complets d'un scénario (même budget, ciblage différent). */
+  private computePlan(
+    params: DigitalSimulationParameters,
+    variant: (typeof SCENARIO_VARIANTS)[number],
+  ): ScenarioPlan {
+    // Même graine pour tous les scénarios : seules les stratégies diffèrent.
+    const seed = `${params.objective}:${params.budget.amount}:${params.budget.allocation}`;
+    const breadth =
+      this.audienceBreadthScore(params.audience) * variant.breadth;
 
     // Répartition du budget par canal : proportionnelle à l'audience connue
     // (followerCount) quand disponible, sinon égale — le contrat d'entrée ne
@@ -102,13 +250,6 @@ export class DigitalSimulationEngineHeuristic implements DigitalSimulationEngine
 
     const channelEstimates: ChannelEstimate[] = params.channels.map(
       (channel, index) => {
-        if (!channel.metrics) {
-          warnings.push(
-            channel.accountLinked
-              ? `Les statistiques du compte ${channel.platform} lié ne sont pas encore synchronisées — la prévision utilise les références de marché. Resynchronisez le compte depuis Mon entreprise puis relancez la simulation.`
-              : `Aucune métrique réelle disponible pour ${channel.platform} — connectez le compte social correspondant pour une prévision plus précise.`,
-          );
-        }
         const share = weights[index] / totalWeight;
         const channelBudget = params.budget.amount * share;
         const estimate = this.estimateChannel(
@@ -120,6 +261,7 @@ export class DigitalSimulationEngineHeuristic implements DigitalSimulationEngine
           `${seed}:${channel.platform}`,
           // Références mesurées sur des campagnes Facebook Ads : Facebook seulement.
           channel.platform === 'FACEBOOK' ? params.calibration : null,
+          { ctr: variant.ctr, conversion: variant.conversion },
         );
         return {
           ...estimate,
@@ -140,38 +282,26 @@ export class DigitalSimulationEngineHeuristic implements DigitalSimulationEngine
     const predictedConversions = Math.round(
       channelEstimates.reduce((sum, c) => sum + c.conversions, 0),
     );
-    const predictedEngagementRate =
+    const average = (values: number[]) =>
       Math.round(
-        (channelEstimates.reduce((sum, c) => sum + c.engagementRate, 0) /
-          channelEstimates.length) *
-          100,
+        (values.reduce((sum, v) => sum + v, 0) / values.length) * 100,
       ) / 100;
-    const predictedRoas =
-      Math.round(
-        (channelEstimates.reduce((sum, c) => sum + c.roas, 0) /
-          channelEstimates.length) *
-          100,
-      ) / 100;
-    const predictedCtr =
-      predictedReach > 0
-        ? Math.round((predictedClicks / predictedReach) * 10000) / 100
-        : 0;
+    const ratio = (a: number, b: number, scale = 1) =>
+      b > 0 ? Math.round((a / b) * scale * 100) / 100 : 0;
 
-    const avgCpc =
-      predictedClicks > 0
-        ? Math.round((params.budget.amount / predictedClicks) * 100) / 100
-        : 0;
-    const costPerAcquisition =
-      predictedConversions > 0
-        ? Math.round((params.budget.amount / predictedConversions) * 100) / 100
-        : 0;
-    const conversionRate =
-      predictedClicks > 0
-        ? Math.round((predictedConversions / predictedClicks) * 10000) / 100
-        : 0;
-
-    const channelBreakdown: DigitalSimulationChannelSnapshot[] =
-      channelEstimates.map((c) => ({
+    return {
+      predictedReach,
+      predictedClicks,
+      predictedConversions,
+      predictedEngagementRate: average(
+        channelEstimates.map((c) => c.engagementRate),
+      ),
+      predictedRoas: average(channelEstimates.map((c) => c.roas)),
+      predictedCtr: ratio(predictedClicks, predictedReach, 100),
+      avgCpc: ratio(params.budget.amount, predictedClicks),
+      costPerAcquisition: ratio(params.budget.amount, predictedConversions),
+      conversionRate: ratio(predictedConversions, predictedClicks, 100),
+      channelBreakdown: channelEstimates.map((c) => ({
         platform: c.platform,
         budgetAmount: c.budgetAmount,
         budgetPercent: c.budgetPercent,
@@ -179,42 +309,13 @@ export class DigitalSimulationEngineHeuristic implements DigitalSimulationEngine
         predictedClicks: c.clicks,
         predictedConversions: c.conversions,
         predictedRoas: c.roas,
-      }));
-
-    const scenarios = this.buildScenarios({
-      predictedReach,
-      predictedClicks,
-      predictedConversions,
-      predictedRoas,
-    });
-    const weeklySeries = this.buildWeeklySeries(params.budget.amount, {
-      predictedReach,
-      predictedClicks,
-      predictedConversions,
-    });
-
-    const result = {
-      predictedReach,
-      predictedEngagementRate,
-      predictedCtr,
-      predictedRoas,
-      warnings,
-      avgCpc,
-      costPerAcquisition,
-      conversionRate,
-      scenarios,
-      channelBreakdown,
-      weeklySeries,
+      })),
+      weeklySeries: this.buildWeeklySeries(params.budget.amount, {
+        predictedReach,
+        predictedClicks,
+        predictedConversions,
+      }),
     };
-
-    return Promise.resolve({
-      ...result,
-      narrativeSummary: this.buildNarrativeSummary(
-        params,
-        result,
-        channelBreakdown,
-      ),
-    });
   }
 
   /** ~1.0 pour un ciblage "moyen" ; > 1 pour une audience large (plafond de
@@ -252,6 +353,7 @@ export class DigitalSimulationEngineHeuristic implements DigitalSimulationEngine
     breadth: number,
     seed: string,
     calibration?: LocalBenchmark | null,
+    relevance: { ctr: number; conversion: number } = { ctr: 1, conversion: 1 },
   ): Omit<ChannelEstimate, 'budgetAmount' | 'budgetPercent'> {
     const bench = DIGITAL_SIMULATION_BENCHMARKS[objective];
     // Plus il y a de campagnes réelles, plus elles pèsent face à la
@@ -289,13 +391,15 @@ export class DigitalSimulationEngineHeuristic implements DigitalSimulationEngine
         calibration?.ctrPercent,
       );
     }
+    ctr *= relevance.ctr;
     const clicks = reach * (ctr / 100);
 
-    const conversionRate = blend(
-      midpoint(bench.conversionRatePercent) *
-        this.deterministicJitter(`${seed}:conv`),
-      calibration?.conversionRatePercent,
-    );
+    const conversionRate =
+      blend(
+        midpoint(bench.conversionRatePercent) *
+          this.deterministicJitter(`${seed}:conv`),
+        calibration?.conversionRatePercent,
+      ) * relevance.conversion;
     const conversions = clicks * (conversionRate / 100);
 
     const engagementRate =
@@ -315,38 +419,6 @@ export class DigitalSimulationEngineHeuristic implements DigitalSimulationEngine
       engagementRate: Math.round(engagementRate * 100) / 100,
       roas: Math.round(roas * 100) / 100,
     };
-  }
-
-  private buildScenarios(recommended: {
-    predictedReach: number;
-    predictedClicks: number;
-    predictedConversions: number;
-    predictedRoas: number;
-  }): DigitalSimulationScenarioSnapshot[] {
-    const variants: {
-      id: string;
-      label: string;
-      factor: number;
-      score: number;
-    }[] = [
-      { id: 'A', label: 'Scénario recommandé', factor: 1, score: 92 },
-      { id: 'B', label: 'Scénario alternatif B', factor: 0.85, score: 78 },
-      { id: 'C', label: 'Scénario alternatif C', factor: 0.7, score: 64 },
-    ];
-
-    return variants.map((variant) => ({
-      id: variant.id,
-      label: variant.label,
-      isRecommended: variant.id === 'A',
-      score: variant.score,
-      predictedReach: Math.round(recommended.predictedReach * variant.factor),
-      predictedClicks: Math.round(recommended.predictedClicks * variant.factor),
-      predictedConversions: Math.round(
-        recommended.predictedConversions * variant.factor,
-      ),
-      predictedRoas:
-        Math.round(recommended.predictedRoas * variant.factor * 100) / 100,
-    }));
   }
 
   private buildWeeklySeries(
