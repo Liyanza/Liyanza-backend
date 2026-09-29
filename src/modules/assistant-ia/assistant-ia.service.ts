@@ -4,6 +4,7 @@ import {
   ForbiddenException,
   InternalServerErrorException,
   BadRequestException,
+  ServiceUnavailableException,
   Inject,
   Logger,
 } from '@nestjs/common';
@@ -21,6 +22,8 @@ import type { SseEmit } from '../../common/http/sse.util';
 import type {
   AskQuestionContext,
   CampaignContext,
+  GenerateRecommendationsParams,
+  GenerateRecommendationsResult,
   IAEngineInterface,
 } from './clients/ia-engine.interface';
 
@@ -41,6 +44,21 @@ const IA_CONTEXT_MESSAGE_MAX_LENGTH = 1_500;
 
 /** Indicateurs (`Statistic`) transmis au plus pour une campagne. */
 const IA_CONTEXT_CAMPAIGN_STATISTICS = 50;
+
+/** Ordre d'affichage des recommandations : les plus urgentes d'abord. */
+const PRIORITY_RANK: Record<string, number> = { high: 0, medium: 1, low: 2 };
+
+const byPriority = <T extends { priority: string }>(items: T[]): T[] =>
+  items.sort(
+    (a, b) =>
+      (PRIORITY_RANK[a.priority] ?? 3) - (PRIORITY_RANK[b.priority] ?? 3),
+  );
+
+const toDay = (date: Date) => date.toISOString().slice(0, 10);
+
+/** Nombre fini, ou `undefined` (valeur absente ou non numérique). */
+const num = (value: unknown): number | undefined =>
+  typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 
 /**
  * Conversations de l'assistant IA (Copilot du dashboard).
@@ -500,30 +518,73 @@ export class AssistantIService {
   // 4. Recommandations : liste pour une campagne
   // --------------------------------------------------------------
   async getRecommandations(campaignId: string, user: AuthenticatedUser) {
-    // Verify campaign access
-    const campaign = await this.prisma.campaign.findFirst({
-      where: {
-        id: campaignId,
-        launchedBy: { companyId: user.companyId },
-      },
-      include: { launchedBy: true },
-    });
-    if (!campaign) {
-      throw new NotFoundException('Campaign not found.');
-    }
-    assertSameCompany(user, campaign.launchedBy.companyId, 'Campaign');
+    await this.loadCompanyCampaign(campaignId, user);
 
-    return this.prisma.recommendation.findMany({
+    const recommendations = await this.prisma.recommendation.findMany({
       where: { campaignId },
-      orderBy: { priority: 'asc' }, // high -> low (or customize)
+      orderBy: { generatedAt: 'desc' },
     });
+    // `priority` est une chaîne : un tri SQL la classerait par ordre
+    // alphabétique (high, low, medium).
+    return byPriority(recommendations);
   }
 
   // --------------------------------------------------------------
   // 5. Recommandations : génération via le moteur IA
   // --------------------------------------------------------------
+  /**
+   * Demande à l'IA 3 à 5 conseils fondés sur tout ce que la plateforme sait
+   * de la campagne, puis remplace les recommandations générées
+   * précédemment (celles enregistrées depuis une réponse du Copilot,
+   * `sourceMessageId`, sont conservées).
+   */
   async genererRecommandations(campaignId: string, user: AuthenticatedUser) {
-    // Verify campaign access
+    const campaign = await this.loadCompanyCampaign(campaignId, user);
+    const context = await this.buildRecommendationContext(campaign.id);
+
+    let iaResult: GenerateRecommendationsResult;
+    try {
+      iaResult = await this.iaEngine.generateRecommendations(context);
+    } catch (error) {
+      this.logger.warn(
+        `Recommendation generation failed for campaign ${campaign.id}: ${error instanceof Error ? error.message : 'unknown error'}`,
+      );
+      throw new ServiceUnavailableException(
+        "L'assistant IA est momentanément indisponible. Réessayez dans un instant.",
+      );
+    }
+
+    // Même correctif que dans `envoyerMessage` : le callback utilise le
+    // client transactionnel `tx`, jamais `this.prisma`.
+    const generatedAt = new Date();
+    const created = await this.prisma.$transaction(async (tx) => {
+      await tx.recommendation.deleteMany({
+        where: { campaignId: campaign.id, sourceMessageId: null },
+      });
+      return Promise.all(
+        iaResult.recommendations.map((rec) =>
+          tx.recommendation.create({
+            data: {
+              title: rec.title ?? null,
+              content: rec.content,
+              priority: rec.priority,
+              category: rec.category ?? null,
+              generatedAt,
+              campaignId: campaign.id,
+              companyId: user.companyId,
+            },
+          }),
+        ),
+      );
+    });
+
+    return byPriority(created);
+  }
+
+  private async loadCompanyCampaign(
+    campaignId: string,
+    user: AuthenticatedUser,
+  ) {
     const campaign = await this.prisma.campaign.findFirst({
       where: {
         id: campaignId,
@@ -535,41 +596,231 @@ export class AssistantIService {
       throw new NotFoundException('Campaign not found.');
     }
     assertSameCompany(user, campaign.launchedBy.companyId, 'Campaign');
+    return campaign;
+  }
 
-    // Call IA engine
-    let iaResult;
-    try {
-      iaResult = await this.iaEngine.generateRecommendations({
-        campaignId: campaign.id,
-        campaignName: campaign.name,
+  /**
+   * Contexte envoyé à `POST /campaign/recommendations` : paramètres,
+   * dernière simulation, résultats réels, alertes ouvertes, radio, terrain.
+   * `campaignId` a déjà été vérifié dans le périmètre de l'entreprise.
+   */
+  async buildRecommendationContext(
+    campaignId: string,
+  ): Promise<GenerateRecommendationsParams> {
+    const now = new Date();
+    const campaign = await this.prisma.campaign.findUniqueOrThrow({
+      where: { id: campaignId },
+      select: {
+        name: true,
+        type: true,
+        objective: true,
+        status: true,
+        plannedBudget: true,
+        actualBudget: true,
+        startDate: true,
+        endDate: true,
+        launchedBy: {
+          select: {
+            company: {
+              select: { name: true, businessSector: true, address: true },
+            },
+          },
+        },
+        digitalDetails: {
+          select: {
+            objective: true,
+            customObjective: true,
+            ageMin: true,
+            ageMax: true,
+            targetGender: true,
+            targetLocations: true,
+            targetInterests: true,
+            budgetAllocation: true,
+            metaCampaignId: true,
+            channels: { select: { platform: true } },
+          },
+        },
+        digitalSimulations: {
+          orderBy: { simulatedAt: 'desc' },
+          take: 1,
+          select: {
+            simulatedAt: true,
+            predictedReach: true,
+            predictedCtr: true,
+            predictedEngagementRate: true,
+            avgCpc: true,
+            costPerAcquisition: true,
+            conversionRate: true,
+            warnings: true,
+            scenarios: true,
+            aiAnalysis: true,
+          },
+        },
+        adObservation: {
+          select: {
+            spendXaf: true,
+            impressions: true,
+            reach: true,
+            clicks: true,
+            conversions: true,
+            collectedAt: true,
+          },
+        },
+        alerts: {
+          where: { resolvedAt: null },
+          orderBy: { createdAt: 'desc' },
+          take: 10,
+          select: { type: true, severity: true, data: true },
+        },
+        broadcasts: { select: { status: true, scheduledAt: true } },
+        installations: {
+          select: {
+            status: true,
+            proof: { select: { validationStatus: true } },
+          },
+        },
+        statistics: {
+          orderBy: { computedAt: 'desc' },
+          take: IA_CONTEXT_CAMPAIGN_STATISTICS,
+          select: { indicator: true, value: true },
+        },
+        recommendations: {
+          orderBy: { generatedAt: 'desc' },
+          take: 10,
+          select: { title: true, content: true },
+        },
+      },
+    });
+
+    const actualBudget = campaign.actualBudget.toNumber();
+    const context: GenerateRecommendationsParams = {
+      today: toDay(now),
+      campaign: {
+        name: campaign.name,
+        type: campaign.type,
         objective: campaign.objective,
+        status: campaign.status,
         plannedBudget: campaign.plannedBudget.toNumber(),
-      });
-    } catch {
-      throw new InternalServerErrorException(
-        'Failed to generate recommendations from AI engine. Please try again later.',
-      );
+        ...(actualBudget > 0 && { actualBudget }),
+        startDate: toDay(campaign.startDate),
+        endDate: toDay(campaign.endDate),
+      },
+      alerts: campaign.alerts.map((alert) => ({
+        type: alert.type,
+        severity: alert.severity,
+        data:
+          alert.data &&
+          typeof alert.data === 'object' &&
+          !Array.isArray(alert.data)
+            ? (alert.data as Record<string, unknown>)
+            : {},
+      })),
+      statistics: {},
+      previousRecommendations: campaign.recommendations.map((rec) =>
+        (rec.title ?? rec.content).slice(0, 300),
+      ),
+    };
+
+    const company = campaign.launchedBy.company;
+    if (company) context.company = company;
+
+    const digital = campaign.digitalDetails;
+    if (digital) {
+      context.digital = {
+        objective: digital.objective,
+        ...(digital.customObjective && {
+          customObjective: digital.customObjective,
+        }),
+        ageMin: digital.ageMin,
+        ageMax: digital.ageMax,
+        gender: digital.targetGender,
+        locations: digital.targetLocations,
+        interests: digital.targetInterests,
+        budgetAllocation: digital.budgetAllocation,
+        channels: digital.channels.map((channel) => channel.platform),
+        linkedToFacebookAds: Boolean(digital.metaCampaignId),
+      };
     }
 
-    // Persist generated recommendations (all linked to the campaign)
-    // atomically — même correctif que dans `envoyerMessage` : le callback
-    // utilise le client transactionnel `tx`, jamais `this.prisma`.
-    const createdRecommendations = await this.prisma.$transaction((tx) =>
-      Promise.all(
-        iaResult.recommendations.map((rec) =>
-          tx.recommendation.create({
-            data: {
-              content: rec.content,
-              priority: rec.priority,
-              generatedAt: new Date(),
-              campaignId: campaign.id,
-              companyId: user.companyId,
-            },
-          }),
-        ),
-      ),
-    );
+    const simulation = campaign.digitalSimulations[0];
+    if (simulation) {
+      const scenarios = Array.isArray(simulation.scenarios)
+        ? (simulation.scenarios as Array<Record<string, unknown> | null>)
+        : [];
+      const recommended = scenarios.find((s) => s?.isRecommended === true);
+      const analysis = simulation.aiAnalysis as { summary?: unknown } | null;
+      context.simulation = {
+        simulatedAt: simulation.simulatedAt.toISOString(),
+        predictedReach: num(simulation.predictedReach),
+        predictedCtr: num(simulation.predictedCtr),
+        predictedEngagementRate: num(simulation.predictedEngagementRate),
+        avgCpc: num(simulation.avgCpc),
+        costPerAcquisition: num(simulation.costPerAcquisition),
+        conversionRate: num(simulation.conversionRate),
+        recommendedStrategy:
+          typeof recommended?.strategy === 'string'
+            ? recommended.strategy
+            : undefined,
+        warnings: simulation.warnings.slice(0, 10),
+        aiSummary:
+          typeof analysis?.summary === 'string'
+            ? analysis.summary.slice(0, 2000)
+            : undefined,
+      };
+    }
 
-    return createdRecommendations;
+    const observation = campaign.adObservation;
+    if (observation) {
+      context.actual = {
+        ...observation,
+        collectedAt: observation.collectedAt.toISOString(),
+      };
+    }
+
+    if (campaign.broadcasts.length > 0) {
+      const radio = {
+        planned: 0,
+        broadcasted: 0,
+        missed: 0,
+        cancelled: 0,
+        upcoming: 0,
+      };
+      for (const broadcast of campaign.broadcasts) {
+        if (broadcast.status === 'PLANNED') {
+          radio.planned += 1;
+          if (broadcast.scheduledAt > now) radio.upcoming += 1;
+        } else if (broadcast.status === 'BROADCASTED') radio.broadcasted += 1;
+        else if (broadcast.status === 'MISSED') radio.missed += 1;
+        else if (broadcast.status === 'CANCELLED') radio.cancelled += 1;
+      }
+      context.radio = radio;
+    }
+
+    if (campaign.installations.length > 0) {
+      const field = {
+        installations: campaign.installations.length,
+        byStatus: {} as Record<string, number>,
+        proofsValidated: 0,
+        proofsPending: 0,
+        proofsRejected: 0,
+      };
+      for (const installation of campaign.installations) {
+        field.byStatus[installation.status] =
+          (field.byStatus[installation.status] ?? 0) + 1;
+        const proof = installation.proof?.validationStatus;
+        if (proof === 'VALIDATED') field.proofsValidated += 1;
+        else if (proof === 'REJECTED') field.proofsRejected += 1;
+        else if (proof) field.proofsPending += 1;
+      }
+      context.field = field;
+    }
+
+    for (const stat of campaign.statistics) {
+      if (!(stat.indicator in context.statistics)) {
+        context.statistics[stat.indicator] = stat.value;
+      }
+    }
+
+    return context;
   }
 }

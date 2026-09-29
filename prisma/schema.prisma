@@ -364,8 +364,13 @@ model AiMessage {
 /// Entité RECOMMANDATION
 model Recommendation {
   id          String   @id @default(cuid())
+  /// L'action en quelques mots (recommandations générées par l'IA ; null
+  /// pour les plus anciennes, où tout tient dans `content`).
+  title       String?
   content     String   @db.Text
   priority    String
+  /// budget, audience, creative, channel, timing, field, radio, measurement.
+  category    String?
   generatedAt DateTime
 
   sourceMessageId String?    @unique

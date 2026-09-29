@@ -14,6 +14,7 @@ import {
 import { Request as ExpressRequest } from 'express';
 import type { Response } from 'express';
 import { streamSse } from '../../common/http/sse.util';
+import { Throttle } from '@nestjs/throttler';
 import { Role } from '@prisma/client';
 import {
   ApiBearerAuth,
@@ -211,10 +212,13 @@ export class AssistantIController {
    * Trigger generation of recommendations via IA engine.
    */
   @Post('campagnes/:id/recommandations/generer')
+  // Chaque génération consomme un appel Gemini.
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @Roles(Role.ADMIN, Role.MARKETING_MANAGER)
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Trigger generation of new recommendations' })
   @ApiResponse({ status: 201, description: 'Recommendations generated' })
+  @ApiResponse({ status: 503, description: 'AI service unavailable' })
   async genererRecommandations(
     @Param('id') campaignId: string,
     @Request() req: AuthenticatedRequest,

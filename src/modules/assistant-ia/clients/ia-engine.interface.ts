@@ -62,17 +62,98 @@ export interface AskPublicQuestionParams {
   recentMessages?: ChatHistoryMessage[];
 }
 
+/**
+ * Tout ce que le backend sait d'une campagne, envoyé au service chatbot
+ * (`POST /campaign/recommendations`, modèle Pydantic
+ * `CampaignRecommendationsRequest`). Chargé dans le périmètre de
+ * l'entreprise de l'utilisateur ; un bloc absent = pas de donnée.
+ */
 export interface GenerateRecommendationsParams {
-  campaignId: string;
-  campaignName: string;
-  objective: string;
-  plannedBudget: number;
+  /** Date du jour, AAAA-MM-JJ. */
+  today: string;
+  campaign: {
+    name: string;
+    type: 'DIGITAL' | 'RADIO' | 'POSTER';
+    objective: string;
+    status: string;
+    plannedBudget: number;
+    actualBudget?: number;
+    startDate: string;
+    endDate: string;
+  };
+  company?: { name: string; businessSector: string; address: string };
+  digital?: {
+    objective: string;
+    customObjective?: string;
+    ageMin: number;
+    ageMax: number;
+    gender: string;
+    locations: string[];
+    interests: string[];
+    budgetAllocation: string;
+    channels: string[];
+    linkedToFacebookAds: boolean;
+  };
+  /** Dernière simulation (scénario recommandé). */
+  simulation?: {
+    simulatedAt: string;
+    predictedReach?: number;
+    predictedCtr?: number;
+    predictedEngagementRate?: number;
+    avgCpc?: number;
+    costPerAcquisition?: number;
+    conversionRate?: number;
+    recommendedStrategy?: string;
+    warnings: string[];
+    aiSummary?: string;
+  };
+  /** Résultats réels Facebook Ads, totaux depuis le lancement. */
+  actual?: {
+    spendXaf: number;
+    impressions: number;
+    reach: number;
+    clicks: number;
+    conversions: number;
+    collectedAt: string;
+  };
+  /** Alertes ouvertes (non résolues). */
+  alerts: Array<{
+    type: string;
+    severity: string;
+    data: Record<string, unknown>;
+  }>;
+  radio?: {
+    planned: number;
+    broadcasted: number;
+    missed: number;
+    cancelled: number;
+    /** Diffusions prévues pas encore passées. */
+    upcoming: number;
+  };
+  field?: {
+    installations: number;
+    byStatus: Record<string, number>;
+    proofsValidated: number;
+    proofsPending: number;
+    proofsRejected: number;
+  };
+  /** Dernière valeur connue de chaque indicateur (`Statistic`). */
+  statistics: Record<string, number>;
+  /** Titres (ou textes) des recommandations déjà données, à ne pas répéter. */
+  previousRecommendations: string[];
 }
+
+export type RecommendationPriority = 'high' | 'medium' | 'low';
 
 export interface GenerateRecommendationsResult {
   recommendations: Array<{
+    /** L'action, en quelques mots. */
+    title?: string;
+    /** Le détail : quoi faire et pourquoi. */
     content: string;
-    priority: string; // ex: "high", "medium", "low"
+    priority: RecommendationPriority;
+    /** budget, audience, creative, channel, timing, field, radio, measurement. */
+    category?: string;
   }>;
 }
 

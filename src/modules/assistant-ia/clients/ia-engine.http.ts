@@ -10,8 +10,8 @@ import type {
   AskQuestionResult,
   GenerateRecommendationsParams,
   GenerateRecommendationsResult,
+  RecommendationPriority,
 } from './ia-engine.interface';
-import { IAEngineMock } from './ia-engine.mock';
 
 /**
  * Client HTTP du service chatbot `kiyanza_assistant_ia` (FastAPI, hébergé
@@ -25,6 +25,23 @@ import { IAEngineMock } from './ia-engine.mock';
  */
 /** Durée maximale d'une réponse en flux, de la requête au dernier morceau. */
 const STREAM_TIMEOUT_MS = 120_000;
+
+/**
+ * Attente maximale des recommandations : le service borne lui-même Gemini à
+ * 2 × 20 s + 1 s (`ask_llm_json`), on lui laisse un peu de marge.
+ */
+const RECOMMENDATIONS_TIMEOUT_MS = 50_000;
+
+interface RecommendationsResponse {
+  recommendations?: Array<{
+    title?: unknown;
+    detail?: unknown;
+    priority?: unknown;
+    category?: unknown;
+  }>;
+}
+
+const PRIORITIES: readonly RecommendationPriority[] = ['high', 'medium', 'low'];
 
 function parseSseEvent(raw: string): { type: string; text?: string } | null {
   const data = raw
@@ -43,7 +60,6 @@ function parseSseEvent(raw: string): { type: string; text?: string } | null {
 @Injectable()
 export class IAEngineHttpClient implements IAEngineInterface {
   private readonly logger = new Logger(IAEngineHttpClient.name);
-  private readonly recommendationsFallback = new IAEngineMock();
 
   constructor(
     private readonly http: HttpService,
@@ -153,13 +169,55 @@ export class IAEngineHttpClient implements IAEngineInterface {
     throw new Error('IA stream ended without completion');
   }
 
-  // Le service chatbot n'expose pas (encore) de génération de
-  // recommandations : on garde le comportement du mock pour cette méthode
-  // plutôt que de casser `POST /campagnes/:id/recommandations/generer`.
-  generateRecommendations = (
+  /**
+   * `POST /campaign/recommendations` : 3 à 5 conseils rédigés par Gemini à
+   * partir du contexte complet de la campagne. Lève en cas d'échec : mieux
+   * vaut un message « réessayez » qu'une recommandation factice.
+   */
+  generateRecommendations = async (
     params: GenerateRecommendationsParams,
-  ): Promise<GenerateRecommendationsResult> =>
-    this.recommendationsFallback.generateRecommendations(params);
+  ): Promise<GenerateRecommendationsResult> => {
+    const { baseUrl, token } = this.target();
+    let data: RecommendationsResponse;
+    try {
+      ({ data } = await firstValueFrom(
+        this.http.post<RecommendationsResponse>(
+          `${baseUrl}/campaign/recommendations`,
+          params,
+          {
+            headers: {
+              'X-Internal-Token': token,
+              'Content-Type': 'application/json',
+            },
+            timeout: RECOMMENDATIONS_TIMEOUT_MS,
+          },
+        ),
+      ));
+    } catch (error) {
+      throw this.toIAError(error);
+    }
+
+    const recommendations = (data?.recommendations ?? []).flatMap((item) => {
+      const title = typeof item.title === 'string' ? item.title.trim() : '';
+      const content = typeof item.detail === 'string' ? item.detail.trim() : '';
+      if (!title || !content) return [];
+      const priority = PRIORITIES.includes(
+        item.priority as RecommendationPriority,
+      )
+        ? (item.priority as RecommendationPriority)
+        : 'medium';
+      const category =
+        typeof item.category === 'string' && item.category
+          ? item.category
+          : undefined;
+      return [{ title, content, priority, category }];
+    });
+    if (recommendations.length === 0) {
+      this.logger.warn('IA service returned no usable recommendation');
+      throw new Error('IA service returned no recommendation');
+    }
+    return { recommendations };
+  };
 
   private toIAError(error: unknown): Error {
     if (error instanceof AxiosError) {
