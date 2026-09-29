@@ -25,6 +25,20 @@ const PLATFORM_LABEL: Record<'FACEBOOK' | 'INSTAGRAM', string> = {
 // Ads, pas une mesure Liyanza.
 const AVERAGE_FREQUENCY = 1.8;
 
+/** Libellés de l'objectif dans le résumé de repli (sans analyse IA). */
+const OBJECTIVE_LABEL: Record<
+  DigitalSimulationParameters['objective'],
+  string
+> = {
+  AWARENESS: 'notoriété',
+  ENGAGEMENT: 'engagement',
+  TRAFFIC: 'trafic',
+  LEADS: 'génération de prospects',
+  CONVERSION: 'conversions',
+  SALES: 'ventes',
+  MESSAGES: 'conversations WhatsApp / Messenger',
+};
+
 /**
  * Poids des références de marché face aux campagnes réelles mesurées
  * (équivaut à 5 campagnes) : voir `estimateChannel`.
@@ -387,7 +401,7 @@ export class DigitalSimulationEngineHeuristic implements DigitalSimulationEngine
   ): string {
     const period = params.budget.allocation === 'DAILY' ? 'quotidien' : 'total';
     const sentences: string[] = [
-      `Simulation pour un objectif "${params.objective}" avec un budget ${period} de ${params.budget.amount.toLocaleString('fr-FR')} FCFA : portée estimée ${result.predictedReach.toLocaleString('fr-FR')} personnes, ${result.predictedRoas.toFixed(1)}x de retour sur dépense attendu.`,
+      `Simulation pour un objectif « ${OBJECTIVE_LABEL[params.objective]} » avec un budget ${period} de ${params.budget.amount.toLocaleString('fr-FR')} FCFA : portée estimée ${result.predictedReach.toLocaleString('fr-FR')} personnes, ${result.predictedRoas.toFixed(1)}x de retour sur dépense attendu.`,
     ];
 
     if (result.predictedRoas >= 2.5) {

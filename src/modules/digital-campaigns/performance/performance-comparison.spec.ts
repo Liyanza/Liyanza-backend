@@ -191,5 +191,11 @@ describe('pickConversionAction', () => {
       'onsite_conversion.messaging_conversation_started_7d',
     );
     expect(pickConversionAction(DigitalObjective.SALES, [])).toBeNull();
+    expect(
+      pickConversionAction(DigitalObjective.MESSAGES, [
+        { action_type: 'lead', value: '3' },
+        ...actions,
+      ]),
+    ).toBe('onsite_conversion.messaging_conversation_started_7d');
   });
 });
