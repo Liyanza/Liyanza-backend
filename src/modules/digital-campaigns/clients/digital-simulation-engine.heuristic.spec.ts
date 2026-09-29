@@ -1,5 +1,8 @@
 import { DigitalSimulationEngineHeuristic } from './digital-simulation-engine.heuristic';
-import { DigitalSimulationParameters } from './digital-simulation-engine.interface';
+import {
+  DigitalSimulationParameters,
+  DigitalSimulationScenarioSnapshot,
+} from './digital-simulation-engine.interface';
 
 function baseParams(
   overrides: Partial<DigitalSimulationParameters> = {},
@@ -197,12 +200,47 @@ describe('DigitalSimulationEngineHeuristic', () => {
     );
   });
 
-  it('recommended scenario A is never scaled down like B and C', async () => {
+  it('computes real strategies with their full detail, same budget', async () => {
     const result = await engine.simulate(baseParams());
-    const scenarioA = result.scenarios.find((s) => s.id === 'A')!;
-    const scenarioC = result.scenarios.find((s) => s.id === 'C')!;
-    expect(scenarioA.isRecommended).toBe(true);
-    expect(scenarioC.predictedReach).toBeLessThan(scenarioA.predictedReach);
+    const byStrategy = Object.fromEntries(
+      result.scenarios.map((s) => [s.strategy, s]),
+    ) as Record<string, DigitalSimulationScenarioSnapshot>;
+
+    // Audience élargie : plus de portée, moins de conversions par clic ;
+    // ciblage resserré : l'inverse.
+    expect(byStrategy.broad.predictedReach).toBeGreaterThan(
+      byStrategy.balanced.predictedReach,
+    );
+    expect(byStrategy.focused.predictedReach).toBeLessThan(
+      byStrategy.balanced.predictedReach,
+    );
+    expect(byStrategy.focused.conversionRate ?? 0).toBeGreaterThan(
+      byStrategy.broad.conversionRate ?? 0,
+    );
+    for (const scenario of result.scenarios) {
+      expect(scenario.description).toBeTruthy();
+      expect(scenario.weeklySeries).toHaveLength(5);
+      expect(scenario.channelBreakdown?.[0].budgetAmount).toBe(500_000);
+      expect(scenario.avgCpc).toBeGreaterThan(0);
+    }
+  });
+
+  it('recommends the strategy that maximises what the objective seeks', async () => {
+    const recommended = async (
+      objective: 'AWARENESS' | 'TRAFFIC' | 'LEADS',
+    ) => {
+      const result = await engine.simulate(baseParams({ objective }));
+      const scenario = result.scenarios.find((s) => s.isRecommended)!;
+      // Le résultat principal est celui du scénario recommandé.
+      expect(result.predictedReach).toBe(scenario.predictedReach);
+      expect(result.scenarios.filter((s) => s.isRecommended)).toHaveLength(1);
+      expect(scenario.score).toBe(95);
+      return scenario.strategy;
+    };
+
+    expect(await recommended('AWARENESS')).toBe('broad'); // portée
+    expect(await recommended('TRAFFIC')).toBe('broad'); // clics
+    expect(await recommended('LEADS')).toBe('focused'); // conversions
   });
 
   it('never divides by zero when the budget is zero', async () => {
