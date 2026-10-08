@@ -372,6 +372,38 @@ export class CampagnesService {
       );
     }
 
+    // Ce qui rend une campagne diffusable dépend de son type : un planning
+    // radio, des emplacements d'affichage ou des paramètres digitaux.
+    if (campaign.type === CampaignType.DIGITAL) {
+      const details = await this.prisma.digitalCampaignDetails.findUnique({
+        where: { campaignId: campaign.id },
+        select: { _count: { select: { channels: true } } },
+      });
+      if (!details) {
+        throw new BadRequestException(
+          'Cannot plan a digital campaign without its audience and objective. Complete the digital details first.',
+        );
+      }
+      if (details._count.channels === 0) {
+        throw new BadRequestException(
+          'Cannot plan a digital campaign without any channel. Select at least one channel first.',
+        );
+      }
+      return;
+    }
+
+    if (campaign.type === CampaignType.POSTER) {
+      const installationCount = await this.prisma.installation.count({
+        where: { campaignId: campaign.id },
+      });
+      if (installationCount === 0) {
+        throw new BadRequestException(
+          'Cannot plan a poster campaign without any placement. Add at least one placement first.',
+        );
+      }
+      return;
+    }
+
     const [channelCount, broadcastCount] = await Promise.all([
       this.prisma.advertisingChannel.count({
         where: { campaignId: campaign.id },

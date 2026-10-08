@@ -1,4 +1,5 @@
 import {
+  IsOptional,
   IsNotEmpty,
   IsString,
   IsNumber,
@@ -25,9 +26,15 @@ export class CreatePrestationDto {
    * repli implicite sur le créateur, qui préserverait le bug pour tout
    * appelant qui l'omettrait) — voir `PrestationsService.createPrestation`
    * pour la validation (existence, même entreprise, rôle PROVIDER).
+   *
+   * Facultatif depuis le lot « supports publicitaires » : une entreprise sans
+   * prestataire inscrit place ses emplacements, puis reçoit la preuve photo
+   * par le lien de preuve (sans compte). S'il est fourni, les mêmes
+   * vérifications s'appliquent.
    */
+  @IsOptional()
   @IsCuid()
-  providerId!: string;
+  providerId?: string;
 
   @IsNumber()
   @Min(-90)

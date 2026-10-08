@@ -27,6 +27,8 @@ type MockedPrisma = {
   };
   advertisingChannel: { count: jest.Mock };
   broadcast: { count: jest.Mock; updateMany: jest.Mock };
+  digitalCampaignDetails: { findUnique: jest.Mock };
+  installation: { count: jest.Mock };
 };
 
 /**
@@ -82,6 +84,8 @@ describe('CampagnesService', () => {
               count: jest.fn().mockResolvedValue(1),
               updateMany: jest.fn().mockResolvedValue({ count: 0 }),
             },
+            digitalCampaignDetails: { findUnique: jest.fn() },
+            installation: { count: jest.fn().mockResolvedValue(0) },
             // CORRECTIF AUDIT : `lancer()` propage désormais l'annulation aux
             // diffisions encore planifiées, de façon atomique.
             $transaction: jest.fn((cb: (tx: unknown) => unknown) =>
@@ -223,6 +227,65 @@ describe('CampagnesService', () => {
       await expect(
         service.lancer('camp-1', { status: CampaignStatus.IN_PROGRESS }, user),
       ).rejects.toThrow(NotFoundException);
+    });
+
+    describe('planning a draft depends on the campaign type', () => {
+      const draft = (type: CampaignType) => ({
+        ...plannedCampaign,
+        type,
+        status: CampaignStatus.DRAFT,
+        endDate: new Date(Date.now() + 30 * 24 * 3600 * 1000),
+      });
+      const plan = () =>
+        service.lancer('camp-1', { status: CampaignStatus.PLANNED }, user);
+
+      beforeEach(() => {
+        txClient.campaign.updateMany.mockResolvedValue({ count: 1 });
+        prisma.campaign.findUniqueOrThrow.mockResolvedValue({
+          ...plannedCampaign,
+          status: CampaignStatus.PLANNED,
+        });
+      });
+
+      it('plans a digital campaign with its details and a channel, without any broadcast', async () => {
+        prisma.campaign.findFirst.mockResolvedValue(
+          draft(CampaignType.DIGITAL),
+        );
+        prisma.digitalCampaignDetails.findUnique.mockResolvedValue({
+          _count: { channels: 1 },
+        });
+        await expect(plan()).resolves.toBeDefined();
+        expect(prisma.broadcast.count).not.toHaveBeenCalled();
+      });
+
+      it('refuses a digital campaign without details or without a channel', async () => {
+        prisma.campaign.findFirst.mockResolvedValue(
+          draft(CampaignType.DIGITAL),
+        );
+        prisma.digitalCampaignDetails.findUnique.mockResolvedValue(null);
+        await expect(plan()).rejects.toThrow(/digital details/);
+
+        prisma.digitalCampaignDetails.findUnique.mockResolvedValue({
+          _count: { channels: 0 },
+        });
+        await expect(plan()).rejects.toThrow(/channel/);
+      });
+
+      it('plans a poster campaign once it has a placement, and refuses it before', async () => {
+        prisma.campaign.findFirst.mockResolvedValue(draft(CampaignType.POSTER));
+        prisma.installation.count.mockResolvedValue(0);
+        await expect(plan()).rejects.toThrow(/placement/);
+
+        prisma.installation.count.mockResolvedValue(2);
+        await expect(plan()).resolves.toBeDefined();
+        expect(prisma.broadcast.count).not.toHaveBeenCalled();
+      });
+
+      it('still requires a channel and broadcasts for a radio campaign', async () => {
+        prisma.campaign.findFirst.mockResolvedValue(draft(CampaignType.RADIO));
+        prisma.broadcast.count.mockResolvedValue(0);
+        await expect(plan()).rejects.toThrow(/broadcast/);
+      });
     });
 
     it('should reject an invalid transition via the state machine', async () => {

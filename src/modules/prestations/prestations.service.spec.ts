@@ -425,6 +425,29 @@ describe('PrestationsService', () => {
       });
       expect(result.providerId).toBe('provider-1');
     });
+
+    it('should create the placement without a provider (proof by link)', async () => {
+      prisma.campaign.findFirst.mockResolvedValue({
+        id: 'camp-1',
+        status: CampaignStatus.DRAFT,
+      });
+      prisma.installation.create.mockResolvedValue({
+        id: 'inst-2',
+        providerId: null,
+      });
+      const { providerId, ...withoutProvider } = baseDto;
+      void providerId;
+
+      await service.createPrestation('camp-1', withoutProvider, adminUser);
+
+      expect(prisma.user.findFirst).not.toHaveBeenCalled();
+      expect(prisma.installation.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          providerId: null,
+          campaignId: 'camp-1',
+        }) as unknown,
+      });
+    });
   });
 
   describe('generateProofLink', () => {
