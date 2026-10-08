@@ -239,8 +239,10 @@ model Installation {
   campaignId String
   campaign   Campaign @relation(fields: [campaignId], references: [id])
 
-  providerId String
-  provider   User   @relation(fields: [providerId], references: [id])
+  /// Prestataire assigné (compte PROVIDER), facultatif : sans lui, la
+  /// preuve arrive par le lien de preuve (`POST /prestations/:id/lien-preuve`).
+  providerId String?
+  provider   User?   @relation(fields: [providerId], references: [id])
 
   proof         PublicationProof?
   statusHistory StatusHistory[]

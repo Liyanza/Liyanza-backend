@@ -101,16 +101,21 @@ export class PrestationsService {
     // cross-tenant) et porter le rôle PROVIDER — sinon
     // `POST /prestations/:id/preuve` resterait inatteignable pour lui (voir
     // le commentaire sur `CreatePrestationDto.providerId`).
-    const provider = await this.prisma.user.findFirst({
-      where: { id: dto.providerId, companyId: user.companyId },
-    });
-    if (!provider) {
-      throw new NotFoundException('Prestataire introuvable.');
-    }
-    if (provider.role !== Role.PROVIDER) {
-      throw new BadRequestException(
-        "L'utilisateur assigné doit avoir le rôle PROVIDER.",
-      );
+    // Facultatif : sans prestataire, la preuve passe par le lien de preuve.
+    let providerId: string | null = null;
+    if (dto.providerId) {
+      const provider = await this.prisma.user.findFirst({
+        where: { id: dto.providerId, companyId: user.companyId },
+      });
+      if (!provider) {
+        throw new NotFoundException('Prestataire introuvable.');
+      }
+      if (provider.role !== Role.PROVIDER) {
+        throw new BadRequestException(
+          "L'utilisateur assigné doit avoir le rôle PROVIDER.",
+        );
+      }
+      providerId = provider.id;
     }
 
     return this.prisma.installation.create({
@@ -121,7 +126,7 @@ export class PrestationsService {
         plannedInstallationDate: plannedDate,
         status: 'PLANNED',
         campaignId: campaign.id,
-        providerId: provider.id,
+        providerId,
       },
     });
   }
