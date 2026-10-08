@@ -28,25 +28,35 @@ sudo -iu ubuntu
 cd /opt/kiyanza/backend/deploy/aws
 ```
 
-## Mettre à jour le code
+## Déploiement automatique
 
-Le serveur n'a aucun identifiant GitHub. Le code arrive par un bundle git déposé dans le bucket des sauvegardes. Depuis un clone complet :
+Chaque push sur `main` déclenche le job **Deploy (AWS)** de [`ci.yml`](../../.github/workflows/ci.yml). Il ne part que si le lint, le build et les tests sont passés.
+
+1. GitHub obtient des identifiants AWS temporaires par OIDC, avec le rôle `github-deploy-backend`. Aucune clé n'est stockée dans GitHub. Ce rôle n'accepte que ce dépôt et la branche `main`. Il ne peut que déposer le bundle et lancer Session Manager sur cette instance.
+2. Le serveur n'a aucun accès à GitHub : le job lui envoie le code sous forme de bundle git, déposé dans `s3://kiyanza-backend-backups-922640335967/deploy/backend.bundle`.
+3. Par Session Manager, le serveur récupère le bundle et place `main` sur ce commit. Il lance ensuite [`deploy.sh`](deploy.sh), qui reconstruit la stack et attend que l'API soit « healthy ». Les migrations Prisma s'appliquent au démarrage de l'API.
+4. Le job vérifie enfin `https://api.kiyanza.com/health`.
+
+Si l'API ne démarre pas, le job échoue et affiche ses derniers journaux. Deux déploiements ne tournent jamais en même temps.
+
+### Déployer à la main
+
+Pour une autre branche, ou si GitHub Actions est indisponible, depuis un clone complet :
 
 ```sh
-git bundle create backend.bundle main
+git branch -f deploy HEAD && git bundle create backend.bundle refs/heads/deploy
 aws s3 cp backend.bundle s3://kiyanza-backend-backups-922640335967/deploy/backend.bundle --profile kiyanza
 ```
 
-Ensuite, sur le serveur :
+Ensuite, sur le serveur, en root :
 
 ```sh
 cd /opt/kiyanza/backend
 aws s3 cp s3://kiyanza-backend-backups-922640335967/deploy/backend.bundle /tmp/backend.bundle
-git pull --ff-only /tmp/backend.bundle main
-cd deploy/aws && docker compose up -d --build api
+sudo -u ubuntu git fetch -q /tmp/backend.bundle deploy
+sudo -u ubuntu git checkout -q -f -B main FETCH_HEAD
+sh deploy/aws/deploy.sh
 ```
-
-Les migrations Prisma s'appliquent au démarrage de l'API.
 
 ## Secrets
 
