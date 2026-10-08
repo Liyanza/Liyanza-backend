@@ -1,0 +1,79 @@
+# Production AWS (EC2 « kiyanza-backend », eu-west-3) — voir README.md.
+#
+#   caddy     seul service exposé (80/443), HTTPS automatique (Let's Encrypt)
+#   api       Liyanza-backend (Dockerfile à la racine du dépôt)
+#   postgres  base de données, volume persistant, sauvegardée chaque nuit sur S3
+#   redis     files BullMQ + jetons de rafraîchissement : `noeviction`, jamais
+#             d'éviction silencieuse, et AOF pour survivre à un redémarrage
+#
+# Lancer depuis ce dossier : docker compose up -d --build
+# Secrets : ./.env (jamais commité, voir .env.example).
+
+name: kiyanza-backend
+
+services:
+  caddy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    command: caddy reverse-proxy --from ${PUBLIC_HOST:?PUBLIC_HOST manquant dans .env} --to api:3000
+    ports:
+      - '80:80'
+      - '443:443'
+      - '443:443/udp'
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
+
+  api:
+    build:
+      context: ../..
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      PORT: '3000'
+      # Caddy est le seul proxy devant l'API.
+      TRUST_PROXY_HOPS: '1'
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:${POSTGRES_VERSION:-18}-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER manquant dans .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD manquant dans .env}
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB manquant dans .env}
+    volumes:
+      # PostgreSQL 18+ : les données vivent sous /var/lib/postgresql/<version>.
+      - postgres_data:/var/lib/postgresql
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --maxmemory-policy noeviction --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  caddy_data:
+  caddy_config:
+  postgres_data:
+  redis_data:

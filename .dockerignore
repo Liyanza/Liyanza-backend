@@ -49,3 +49,7 @@ docker-compose.yml
 README.md
 CONTRIBUTING.md
 docs
+
+# Déploiement AWS : contient le .env de production du serveur
+deploy
+**/.env
