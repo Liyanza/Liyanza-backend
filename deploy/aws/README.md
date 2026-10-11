@@ -8,7 +8,7 @@ Le backend tourne sur une instance EC2 dédiée, en région Paris (`eu-west-3`).
 | Instance | `kiyanza-backend` (`i-092ed836d43e8cec5`), t3.small, Ubuntu 24.04, 2 Go de swap |
 | IP fixe | `13.39.6.244`, enregistrement DNS `api.kiyanza.com` chez LWS |
 | Groupe de sécurité | `kiyanza-backend-web` : ports 80 et 443 uniquement, **pas de SSH** |
-| Rôle IAM | `kiyanza-backend-ec2` : Session Manager et écriture des sauvegardes |
+| Rôle IAM | `kiyanza-backend-ec2` : Session Manager, écriture des sauvegardes et des métriques |
 | Sauvegardes | `s3://kiyanza-backend-backups-922640335967/postgres/`, conservées 30 jours |
 
 Les conteneurs sont décrits dans [`docker-compose.yml`](docker-compose.yml) :
@@ -66,7 +66,7 @@ Après une modification : `docker compose up -d api`.
 
 ## Sauvegardes
 
-Un cron de l'utilisateur `ubuntu` lance `backup.sh` chaque nuit à 2 h UTC :
+Un cron de l'utilisateur `ubuntu` lance `backup.sh` chaque nuit à 2 h UTC. Le dump n'est envoyé que si `pg_restore` arrive à le lire.
 
 ```
 0 2 * * * /opt/kiyanza/backend/deploy/aws/backup.sh >> /opt/kiyanza/backup.log 2>&1
@@ -84,4 +84,30 @@ docker compose exec -T postgres sh -c 'pg_restore --clean --if-exists --no-owner
 ```sh
 docker compose logs -f api
 docker compose ps
+```
+
+## Surveillance
+
+[`monitoring.sh`](monitoring.sh) crée les alertes. Il se lance depuis un poste d'administration et peut être relancé sans risque :
+
+```sh
+ALERT_EMAIL=moi@exemple.com AWS_PROFILE=kiyanza sh deploy/aws/monitoring.sh
+```
+
+Chaque alerte, puis le retour à la normale, est envoyée par e-mail via les sujets SNS `kiyanza-alerts` (us-east-1 et eu-west-3). Une nouvelle adresse doit d'abord confirmer l'e-mail d'abonnement envoyé par AWS.
+
+| Alarme | Déclenchement | Action automatique |
+|---|---|---|
+| `kiyanza-api-down`, `kiyanza-ia-down`, `kiyanza-web-down` | Une sonde Route 53 échoue depuis 2 minutes (`/health` de l'API et de l'IA, page d'accueil du site) | — |
+| `kiyanza-backend-host-failure` | Panne de l'hôte AWS | Instance relancée sur un autre hôte |
+| `kiyanza-backend-unresponsive` | Le système ne répond plus depuis 3 minutes | Redémarrage |
+| `kiyanza-backend-cpu-high` | Processeur au-dessus de 85 % pendant 15 minutes | — |
+| `kiyanza-backend-disk-full` | Disque rempli à plus de 85 % | — |
+| `kiyanza-backend-memory-low` | Moins de 150 Mo de mémoire disponible pendant 15 minutes | — |
+| `kiyanza-backup-missing` | Aucune sauvegarde réussie depuis 25 heures | — |
+
+L'hyperviseur ne voit ni le disque ni la mémoire. [`metrics.sh`](metrics.sh) les envoie à CloudWatch toutes les 5 minutes, via un cron de l'utilisateur `ubuntu` :
+
+```
+*/5 * * * * /opt/kiyanza/backend/deploy/aws/metrics.sh > /dev/null 2>> /opt/kiyanza/metrics.log
 ```
