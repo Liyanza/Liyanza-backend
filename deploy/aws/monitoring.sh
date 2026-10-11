@@ -2,7 +2,7 @@
 # Crée ou met à jour la surveillance de la production. À lancer depuis un
 # poste d'administration (pas depuis le serveur) ; relançable sans risque.
 #
-#   ALERT_EMAIL=moi@exemple.com AWS_PROFILE=kiyanza sh deploy/aws/monitoring.sh
+#   ALERT_EMAILS="moi@exemple.com associe@exemple.com" AWS_PROFILE=kiyanza sh deploy/aws/monitoring.sh
 #
 # Chaque alerte, et le retour à la normale, part par e-mail via un sujet SNS
 # « kiyanza-alerts ». Il en existe un par région, car une alarme ne notifie
@@ -12,7 +12,7 @@
 # Coût indicatif : ~5 $/mois (sondes HTTPS Route 53, métriques personnalisées).
 set -eu
 
-: "${ALERT_EMAIL:?définir ALERT_EMAIL}"
+: "${ALERT_EMAILS:?définir ALERT_EMAILS (adresses séparées par des espaces)}"
 INSTANCE_ID=i-092ed836d43e8cec5
 SERVER_REGION=eu-west-3
 EC2_ROLE=kiyanza-backend-ec2
@@ -30,11 +30,14 @@ aws iam put-role-policy --role-name "$EC2_ROLE" --policy-name cloudwatch-metrics
 
 topic() {
   arn=$(aws sns create-topic --region "$1" --name kiyanza-alerts --query TopicArn --output text)
-  if ! aws sns list-subscriptions-by-topic --region "$1" --topic-arn "$arn" \
-    --query 'Subscriptions[].Endpoint' --output text | tr '\t' '\n' | grep -qx "$ALERT_EMAIL"; then
-    aws sns subscribe --region "$1" --topic-arn "$arn" --protocol email --notification-endpoint "$ALERT_EMAIL" > /dev/null
-    echo "Confirmation envoyée à $ALERT_EMAIL ($1)." >&2
-  fi
+  subscribed=$(aws sns list-subscriptions-by-topic --region "$1" --topic-arn "$arn" \
+    --query 'Subscriptions[].Endpoint' --output text | tr '\t' '\n')
+  for email in $ALERT_EMAILS; do
+    if ! echo "$subscribed" | grep -qx "$email"; then
+      aws sns subscribe --region "$1" --topic-arn "$arn" --protocol email --notification-endpoint "$email" > /dev/null
+      echo "Confirmation envoyée à $email ($1)." >&2
+    fi
+  done
   echo "$arn"
 }
 

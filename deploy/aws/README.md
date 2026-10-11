@@ -91,8 +91,10 @@ docker compose ps
 [`monitoring.sh`](monitoring.sh) crée les alertes. Il se lance depuis un poste d'administration et peut être relancé sans risque :
 
 ```sh
-ALERT_EMAIL=moi@exemple.com AWS_PROFILE=kiyanza sh deploy/aws/monitoring.sh
+ALERT_EMAILS="moi@exemple.com associe@exemple.com" AWS_PROFILE=kiyanza sh deploy/aws/monitoring.sh
 ```
+
+Depuis Git Bash sous Windows, préfixer la commande par `MSYS_NO_PATHCONV=1` : sinon `/health` est converti en chemin Windows.
 
 Chaque alerte, puis le retour à la normale, est envoyée par e-mail via les sujets SNS `kiyanza-alerts` (us-east-1 et eu-west-3). Une nouvelle adresse doit d'abord confirmer l'e-mail d'abonnement envoyé par AWS.
 
