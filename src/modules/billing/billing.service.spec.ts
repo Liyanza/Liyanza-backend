@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   BadGatewayException,
   ForbiddenException,
   ServiceUnavailableException,
@@ -140,6 +141,23 @@ describe('BillingService', () => {
       expect(
         JSON.stringify((error as BadGatewayException).getResponse()),
       ).not.toContain('sk_live');
+    });
+
+    it('should forward a discount code and report a refused one as a 400', async () => {
+      respond(422, { message: 'The discount code is invalid' });
+      const { service } = build();
+      const error = await service
+        .createCheckout({ ...dto, discountCode: 'PROMO-20' }, admin, undefined)
+        .catch((e: unknown) => e);
+
+      const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      expect(JSON.parse(init.body as string)).toMatchObject({
+        discount_code: 'PROMO-20',
+      });
+      expect(error).toBeInstanceOf(BadRequestException);
+      expect((error as BadRequestException).getResponse()).toMatchObject({
+        code: 'DISCOUNT_INVALID',
+      });
     });
 
     it('should map a network failure or timeout to a 502', async () => {

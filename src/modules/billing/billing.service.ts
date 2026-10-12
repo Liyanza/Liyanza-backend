@@ -72,6 +72,7 @@ export class BillingService {
         number: dto.phone.number,
         country_code: dto.phone.countryCode ?? DEFAULT_COUNTRY_CODE,
       },
+      ...(dto.discountCode && { discount_code: dto.discountCode }),
       ...(this.config.returnUrl && { redirect_url: this.config.returnUrl }),
       ...(customerIp && { customer_ip: customerIp }),
       custom_metadata: {
