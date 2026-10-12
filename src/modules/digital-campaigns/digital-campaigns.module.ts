@@ -5,6 +5,7 @@ import { CampaignDescriptionController } from './campaign-description.controller
 import { CampaignDescriptionClient } from './clients/campaign-description.client';
 import { DigitalCampaignsService } from './digital-campaigns.service';
 import { PrismaModule } from '../prisma/prisma.module';
+import { BillingModule } from '../billing/billing.module';
 import { DigitalSimulationEngineHeuristic } from './clients/digital-simulation-engine.heuristic';
 import { DIGITAL_SIMULATION_ENGINE_TOKEN } from './clients/digital-simulation-engine.interface';
 import { SimulationAnalysisClient } from './clients/simulation-analysis.client';
@@ -20,6 +21,7 @@ import { SocialAccountsModule } from '../social-accounts/social-accounts.module'
   // au-delà de 45 s, la simulation est enregistrée sans analyse.
   imports: [
     PrismaModule,
+    BillingModule,
     RedisModule,
     SocialAccountsModule,
     NotificationsModule,

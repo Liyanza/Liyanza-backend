@@ -34,6 +34,15 @@ const PRISMA_ERROR_MAP: Record<string, { status: number; message: string }> = {
   P2025: { status: HttpStatus.NOT_FOUND, message: 'Record not found.' },
 };
 
+/**
+ * Champs supplémentaires qu'une `HttpException` applicative peut exposer au
+ * client en plus de `message` — liste blanche explicite, pour qu'aucun
+ * détail interne ajouté un jour au corps d'une exception ne fuite par
+ * accident. Utilisés par l'erreur `PLAN_LIMIT` (limites des formules), que
+ * le web reconnaît pour proposer la formule requise.
+ */
+const EXPOSED_ERROR_FIELDS = ['code', 'feature', 'requiredPlan', 'limit'];
+
 @Catch()
 export class AllExceptionsFilter implements ExceptionFilter {
   constructor(
@@ -48,7 +57,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
 
     const requestId = this.contextService.getRequestId() || 'unknown';
 
-    const { status, message } = this.resolve(exception, requestId);
+    const { status, message, extra } = this.resolve(exception, requestId);
 
     // Si les en-têtes sont déjà partis (endpoint utilisant `@Res()`, flux,
     // téléchargement interrompu...), écrire à nouveau lèverait
@@ -59,6 +68,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
 
     response.status(status).json({
       statusCode: status,
+      ...extra,
       message,
       path: request.url,
       timestamp: new Date().toISOString(),
@@ -81,19 +91,30 @@ export class AllExceptionsFilter implements ExceptionFilter {
   private resolve(
     exception: unknown,
     requestId: string,
-  ): { status: number; message: string | string[] } {
+  ): {
+    status: number;
+    message: string | string[];
+    extra?: Record<string, unknown>;
+  } {
     // 1. Exceptions HTTP applicatives : message métier, sûr par construction.
     if (exception instanceof HttpException) {
       const status = exception.getStatus();
       const body = exception.getResponse();
 
       let message: string | string[] = exception.message;
+      let extra: Record<string, unknown> | undefined;
       if (typeof body === 'string') {
         message = body;
-      } else if (body && typeof body === 'object' && 'message' in body) {
+      } else if (body && typeof body === 'object') {
         const raw = (body as { message?: unknown }).message;
         if (typeof raw === 'string' || Array.isArray(raw)) {
           message = raw as string | string[];
+        }
+        for (const field of EXPOSED_ERROR_FIELDS) {
+          if (field in body) {
+            extra ??= {};
+            extra[field] = (body as Record<string, unknown>)[field];
+          }
         }
       }
 
@@ -108,7 +129,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
           'AllExceptionsFilter',
         );
       }
-      return { status, message };
+      return { status, message, extra };
     }
 
     // 2. Erreurs Prisma connues : traduites, jamais relayées telles quelles.

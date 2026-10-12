@@ -43,6 +43,7 @@ import { MonitoringModule } from './modules/monitoring/monitoring.module';
 import { MediaModule } from './modules/media/media.module';
 import { DigitalCampaignsModule } from './modules/digital-campaigns/digital-campaigns.module';
 import { SocialAccountsModule } from './modules/social-accounts/social-accounts.module';
+import { BillingModule } from './modules/billing/billing.module';
 
 @Module({
   imports: [
@@ -109,6 +110,7 @@ import { SocialAccountsModule } from './modules/social-accounts/social-accounts.
     MonitoringModule,
     DigitalCampaignsModule,
     SocialAccountsModule,
+    BillingModule,
   ],
   controllers: [AppController],
   providers: [

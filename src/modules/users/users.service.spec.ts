@@ -1,6 +1,8 @@
 /* eslint-disable @typescript-eslint/unbound-method */
 
 import { Test, TestingModule } from '@nestjs/testing';
+import { PlanService } from '../billing/plan.service';
+import { PlanLimitException } from '../billing/plan-limits';
 import {
   BadRequestException,
   ConflictException,
@@ -18,6 +20,13 @@ import { Role } from '@prisma/client';
 import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 
 describe('UsersService', () => {
+  let plans: {
+    assertCanCreateCampaign: jest.Mock;
+    assertCanAddMember: jest.Mock;
+    assertCopilotQuota: jest.Mock;
+    assertAiAdvanced: jest.Mock;
+    hasAiAdvanced: jest.Mock;
+  };
   let service: UsersService;
   let prisma: jest.Mocked<PrismaService>;
   let notificationsService: jest.Mocked<NotificationsService>;
@@ -45,6 +54,14 @@ describe('UsersService', () => {
   };
 
   beforeEach(async () => {
+    // Formule sans limite par défaut ; chaque test de limite la restreint.
+    plans = {
+      assertCanCreateCampaign: jest.fn().mockResolvedValue(undefined),
+      assertCanAddMember: jest.fn().mockResolvedValue(undefined),
+      assertCopilotQuota: jest.fn().mockResolvedValue(undefined),
+      assertAiAdvanced: jest.fn().mockResolvedValue(undefined),
+      hasAiAdvanced: jest.fn().mockResolvedValue(true),
+    };
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         UsersService,
@@ -93,6 +110,7 @@ describe('UsersService', () => {
           provide: EMAIL_PROVIDER_TOKEN,
           useValue: { send: jest.fn().mockResolvedValue(undefined) },
         },
+        { provide: PlanService, useValue: plans },
       ],
     }).compile();
 
@@ -105,6 +123,28 @@ describe('UsersService', () => {
   });
 
   describe('createSubAccount', () => {
+    it('should refuse a new account when the member limit is reached', async () => {
+      (prisma.user.findUnique as jest.Mock).mockResolvedValue(null);
+      plans.assertCanAddMember.mockRejectedValue(
+        new PlanLimitException('members', 'BUSINESS', 3),
+      );
+
+      await expect(
+        service.createSubAccount(
+          {
+            email: 'new@test.com',
+            firstName: 'New',
+            lastName: 'Member',
+            phone: '123',
+            role: Role.MARKETING_MANAGER,
+          },
+          mockUser,
+        ),
+      ).rejects.toThrow(PlanLimitException);
+      expect(prisma.user.create).not.toHaveBeenCalled();
+      expect(queueService.addJob).not.toHaveBeenCalled();
+    });
+
     it('should create a sub-account and send a notification to the admin', async () => {
       const dto = {
         email: 'sub@test.com',
@@ -191,6 +231,20 @@ describe('UsersService', () => {
         expect(sent.text).not.toMatch(/mot de passe/i);
       });
 
+      it('should not send an invitation when the member limit is reached', async () => {
+        (prisma.user.findUnique as jest.Mock).mockResolvedValue(existing);
+        plans.assertCanAddMember.mockRejectedValue(
+          new PlanLimitException('members', 'PRO', 1),
+        );
+
+        await expect(service.createSubAccount(dto, mockUser)).rejects.toThrow(
+          PlanLimitException,
+        );
+        expect(plans.assertCanAddMember).toHaveBeenCalledWith('company-1');
+        expect(redisService.set).not.toHaveBeenCalled();
+        expect(emailProvider.send).not.toHaveBeenCalled();
+      });
+
       it('should refuse a user who is already a member of the company', async () => {
         (prisma.user.findUnique as jest.Mock).mockResolvedValue({
           ...existing,
@@ -271,6 +325,35 @@ describe('UsersService', () => {
       redisService.getDel.mockResolvedValue(null);
       await expect(service.acceptInvitation('tok')).rejects.toThrow(
         BadRequestException,
+      );
+    });
+
+    // L'invitation peut dater d'avant un passage en FREE : la limite est
+    // revérifiée, et le lien remis en place pour après une mise à niveau.
+    it('should refuse (and keep the invitation) when the member limit is now reached', async () => {
+      redisService.getDel.mockResolvedValue(invitation);
+      (prisma.user.findUnique as jest.Mock).mockResolvedValue({
+        id: 'existing',
+        companyId: null,
+        deactivatedAt: null,
+      });
+      (prisma.company.findUnique as jest.Mock).mockResolvedValue({
+        name: 'Acme',
+        deletedAt: null,
+      });
+      plans.assertCanAddMember.mockRejectedValue(
+        new PlanLimitException('members', 'PRO', 1),
+      );
+
+      await expect(service.acceptInvitation('tok')).rejects.toThrow(
+        PlanLimitException,
+      );
+      expect(plans.assertCanAddMember).toHaveBeenCalledWith('company-1');
+      expect(prisma.user.update).not.toHaveBeenCalled();
+      expect(redisService.set).toHaveBeenCalledWith(
+        'company-invitation:tok',
+        invitation,
+        expect.any(Number),
       );
     });
 

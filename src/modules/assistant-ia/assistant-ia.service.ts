@@ -18,6 +18,7 @@ import { UpdateConversationDto } from './dto/update-conversation.dto';
 import { MessageFeedbackDto } from './dto/message-feedback.dto';
 import { RegenererReponseDto } from './dto/regenerer-reponse.dto';
 import { IA_ENGINE_TOKEN } from './clients/ia-engine.interface';
+import { PlanService } from '../billing/plan.service';
 import type { SseEmit } from '../../common/http/sse.util';
 import type {
   AskQuestionContext,
@@ -75,6 +76,7 @@ export class AssistantIService {
   constructor(
     private prisma: PrismaService,
     @Inject(IA_ENGINE_TOKEN) private iaEngine: IAEngineInterface,
+    private plans: PlanService,
   ) {}
 
   // --------------------------------------------------------------
@@ -174,6 +176,7 @@ export class AssistantIService {
     user: AuthenticatedUser,
   ) {
     const conversation = await this.loadOwnConversation(conversationId, user);
+    await this.assertCopilotQuota(user);
 
     const context = await this.buildIAContext(
       conversation,
@@ -198,6 +201,9 @@ export class AssistantIService {
     emit: SseEmit,
   ): Promise<void> {
     const conversation = await this.loadOwnConversation(conversationId, user);
+    // Avant le premier événement SSE : un quota atteint reste un 403 JSON
+    // ordinaire (`streamSse` n'ouvre le flux qu'au premier `emit`).
+    await this.assertCopilotQuota(user);
     const context = await this.buildIAContext(
       conversation,
       user.companyId,
@@ -304,6 +310,9 @@ export class AssistantIService {
     if (lastAnswer?.sender !== 'AI' || lastQuestion?.sender !== 'USER') {
       throw new BadRequestException('Nothing to regenerate.');
     }
+    // Une régénération n'ajoute pas de message, mais coûte un appel LLM :
+    // elle est refusée elle aussi une fois le quota du jour atteint.
+    await this.assertCopilotQuota(user);
 
     const context = await this.buildIAContext(
       conversation,
@@ -359,6 +368,16 @@ export class AssistantIService {
    * Charge une conversation en vérifiant l'entreprise ET l'auteur. Dans les
    * deux cas d'échec : 404, pour ne pas révéler qu'elle existe.
    */
+  /**
+   * Quota quotidien de messages du Copilot (formule FREE). Une conversation
+   * chargée via `loadOwnConversation` garantit déjà une entreprise.
+   */
+  private async assertCopilotQuota(user: AuthenticatedUser): Promise<void> {
+    if (user.companyId) {
+      await this.plans.assertCopilotQuota(user.companyId);
+    }
+  }
+
   private async loadOwnConversation(
     conversationId: string,
     user: AuthenticatedUser,
@@ -540,6 +559,7 @@ export class AssistantIService {
    */
   async genererRecommandations(campaignId: string, user: AuthenticatedUser) {
     const campaign = await this.loadCompanyCampaign(campaignId, user);
+    await this.plans.assertAiAdvanced(campaign.launchedBy.companyId!);
     const context = await this.buildRecommendationContext(campaign.id);
 
     let iaResult: GenerateRecommendationsResult;

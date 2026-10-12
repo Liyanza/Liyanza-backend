@@ -10,6 +10,7 @@ import { UpdateEntrepriseDto } from './dto/update-entreprise.dto';
 import { assertSameCompany } from '../auth/utils/company-scope.util';
 import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { Role, Prisma } from '@prisma/client';
+import { TRIAL_DAYS } from '../billing/plan-limits';
 
 @Injectable()
 export class EntreprisesService {
@@ -49,6 +50,9 @@ export class EntreprisesService {
           businessSector: createDto.businessSector,
           address: createDto.address,
           // deletedAt defaults to null
+          // Essai PRO offert : toutes les fonctions débloquées le temps de
+          // découvrir la plateforme, puis retour à FREE sans paiement.
+          trialEndsAt: new Date(Date.now() + TRIAL_DAYS * 24 * 60 * 60 * 1000),
         },
       });
 

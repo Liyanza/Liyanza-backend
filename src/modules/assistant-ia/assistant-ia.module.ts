@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { AssistantIController } from './assistant-ia.controller';
 import { AssistantIService } from './assistant-ia.service';
 import { PrismaModule } from '../prisma/prisma.module';
+import { BillingModule } from '../billing/billing.module';
 import { IA_ENGINE_TOKEN } from './clients/ia-engine.interface';
 import { IAEngineMock } from './clients/ia-engine.mock';
 import { IAEngineHttpClient } from './clients/ia-engine.http';
@@ -13,7 +14,11 @@ import { PublicAssistantService } from './public-assistant.service';
 @Module({
   // Une réponse du chatbot enchaîne jusqu'à deux appels LLM (génération SQL
   // puis réponse finale) : 10 s, comme pour Brevo, serait bien trop court.
-  imports: [PrismaModule, HttpModule.register({ timeout: 120_000 })],
+  imports: [
+    PrismaModule,
+    BillingModule,
+    HttpModule.register({ timeout: 120_000 }),
+  ],
   controllers: [AssistantIController, PublicAssistantController],
   providers: [
     AssistantIService,

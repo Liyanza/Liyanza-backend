@@ -1,4 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { PlanService } from '../billing/plan.service';
+import { PlanLimitException } from '../billing/plan-limits';
 import { AssistantIService } from './assistant-ia.service';
 import { PrismaService } from '../prisma/prisma.service';
 import {
@@ -59,6 +61,13 @@ const buildTxClient = () => ({
 });
 
 describe('AssistantIService', () => {
+  let plans: {
+    assertCanCreateCampaign: jest.Mock;
+    assertCanAddMember: jest.Mock;
+    assertCopilotQuota: jest.Mock;
+    assertAiAdvanced: jest.Mock;
+    hasAiAdvanced: jest.Mock;
+  };
   let service: AssistantIService;
   let prisma: MockedPrisma;
   let txClient: ReturnType<typeof buildTxClient>;
@@ -83,6 +92,14 @@ describe('AssistantIService', () => {
   beforeEach(async () => {
     txClient = buildTxClient();
 
+    // Formule sans limite par défaut ; chaque test de limite la restreint.
+    plans = {
+      assertCanCreateCampaign: jest.fn().mockResolvedValue(undefined),
+      assertCanAddMember: jest.fn().mockResolvedValue(undefined),
+      assertCopilotQuota: jest.fn().mockResolvedValue(undefined),
+      assertAiAdvanced: jest.fn().mockResolvedValue(undefined),
+      hasAiAdvanced: jest.fn().mockResolvedValue(true),
+    };
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AssistantIService,
@@ -138,6 +155,7 @@ describe('AssistantIService', () => {
             generateRecommendations: jest.fn(),
           },
         },
+        { provide: PlanService, useValue: plans },
       ],
     }).compile();
 
@@ -356,6 +374,20 @@ describe('AssistantIService', () => {
       expect(iaEngine.askQuestion).not.toHaveBeenCalled();
     });
 
+    it('should refuse the message without calling the IA once the daily Copilot quota is reached', async () => {
+      prisma.aiConversation.findUnique.mockResolvedValue(ownConversation());
+      plans.assertCopilotQuota.mockRejectedValue(
+        new PlanLimitException('copilot', 'PRO', 5),
+      );
+
+      await expect(
+        service.envoyerMessage('conv-1', { content: 'x' }, mockUser),
+      ).rejects.toThrow(PlanLimitException);
+      expect(plans.assertCopilotQuota).toHaveBeenCalledWith('company-1');
+      expect(iaEngine.askQuestion).not.toHaveBeenCalled();
+      expect(txClient.aiMessage.create).not.toHaveBeenCalled();
+    });
+
     it('should throw if conversation not found', async () => {
       prisma.aiConversation.findUnique.mockResolvedValue(null);
       await expect(
@@ -435,6 +467,27 @@ describe('AssistantIService', () => {
         userMessage: 'Salut',
         context: { topic: 'test' },
       });
+    });
+
+    // Le 403 doit partir AVANT toute écriture SSE : le client reçoit alors
+    // un corps JSON PLAN_LIMIT ordinaire.
+    it('should throw the plan limit before emitting anything', async () => {
+      prisma.aiConversation.findUnique.mockResolvedValue(ownConversation());
+      plans.assertCopilotQuota.mockRejectedValue(
+        new PlanLimitException('copilot', 'PRO', 5),
+      );
+      const emit = jest.fn();
+
+      await expect(
+        service.envoyerMessageStream(
+          'conv-1',
+          { content: 'x' },
+          mockUser,
+          emit,
+        ),
+      ).rejects.toThrow(PlanLimitException);
+      expect(emit).not.toHaveBeenCalled();
+      expect(iaEngine.streamQuestion).not.toHaveBeenCalled();
     });
 
     it('should throw before emitting anything when the IA fails immediately', async () => {
@@ -536,6 +589,19 @@ describe('AssistantIService', () => {
         },
       });
       expect(result.content).toBe('Nouvelle réponse');
+    });
+
+    it('should refuse a regeneration once the daily Copilot quota is reached', async () => {
+      prisma.aiConversation.findUnique.mockResolvedValue(ownConversation());
+      prisma.aiMessage.findMany.mockResolvedValueOnce([answer, question]);
+      plans.assertCopilotQuota.mockRejectedValue(
+        new PlanLimitException('copilot', 'PRO', 5),
+      );
+
+      await expect(
+        service.regenererDerniereReponse('conv-1', {}, mockUser),
+      ).rejects.toThrow(PlanLimitException);
+      expect(iaEngine.askQuestion).not.toHaveBeenCalled();
     });
 
     it('should refuse when the last message is not an AI reply', async () => {
@@ -916,6 +982,18 @@ describe('AssistantIService', () => {
         }) as Record<string, unknown>,
       });
       expect(result.map((r) => r.id)).toEqual(['rec-A', 'rec-B']);
+    });
+
+    it('should refuse the generation on a plan without advanced AI', async () => {
+      plans.assertAiAdvanced.mockRejectedValue(
+        new PlanLimitException('aiAdvanced', 'PRO', null),
+      );
+
+      await expect(
+        service.genererRecommandations('camp-1', mockUser),
+      ).rejects.toThrow(PlanLimitException);
+      expect(plans.assertAiAdvanced).toHaveBeenCalledWith('company-1');
+      expect(iaEngine.generateRecommendations).not.toHaveBeenCalled();
     });
 
     it('should throw if campaign not found', async () => {

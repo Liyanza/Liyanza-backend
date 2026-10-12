@@ -19,6 +19,7 @@ import type {
   DigitalSimulationResult,
 } from './clients/digital-simulation-engine.interface';
 import { LocalBenchmarksService } from './performance/local-benchmarks.service';
+import { PlanService } from '../billing/plan.service';
 import {
   SimulationAnalysisClient,
   type SimulationAnalysis,
@@ -42,6 +43,7 @@ export class DigitalCampaignsService {
     private simulationEngine: DigitalSimulationEngineInterface,
     private simulationAnalysis: SimulationAnalysisClient,
     private localBenchmarks: LocalBenchmarksService,
+    private plans: PlanService,
   ) {}
 
   async upsertDetails(
@@ -319,12 +321,17 @@ export class DigitalCampaignsService {
 
     // L'analyse IA (explication, risques, recommandations) complète les
     // chiffres du moteur ; son échec ne bloque jamais la simulation.
-    const analysis = await this.analyzeSimulation(
-      campaign,
-      parameters,
-      result,
-      user.companyId,
-    );
+    // Formule FREE : les chiffres seulement, sans analyse — exactement comme
+    // quand le service IA est indisponible (analyse générable plus tard via
+    // `analyzeExistingSimulation`, après une mise à niveau).
+    const analysis = (await this.plans.hasAiAdvanced(user.companyId!))
+      ? await this.analyzeSimulation(
+          campaign,
+          parameters,
+          result,
+          user.companyId,
+        )
+      : null;
 
     return this.prisma.digitalSimulation.create({
       data: {
@@ -394,6 +401,7 @@ export class DigitalCampaignsService {
     user: AuthenticatedUser,
   ) {
     const campaign = await this.validateDigitalCampaignAccess(campaignId, user);
+    await this.plans.assertAiAdvanced(user.companyId!);
     const simulation = await this.prisma.digitalSimulation.findFirst({
       where: { id: simulationId, campaignId: campaign.id },
     });

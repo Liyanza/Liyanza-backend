@@ -1,4 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { PlanService } from '../billing/plan.service';
+import { PlanLimitException } from '../billing/plan-limits';
 import {
   BadRequestException,
   ForbiddenException,
@@ -13,6 +15,13 @@ import type { SimulationEngineInterface } from './clients/simulation-engine.inte
 import { CampaignStatus, Role } from '@prisma/client';
 
 describe('SimulationsService', () => {
+  let plans: {
+    assertCanCreateCampaign: jest.Mock;
+    assertCanAddMember: jest.Mock;
+    assertCopilotQuota: jest.Mock;
+    assertAiAdvanced: jest.Mock;
+    hasAiAdvanced: jest.Mock;
+  };
   let service: SimulationsService;
   let prisma: {
     question: { findMany: jest.Mock };
@@ -54,6 +63,14 @@ describe('SimulationsService', () => {
       simulationAnswer: { createMany: jest.fn() },
     };
 
+    // Formule sans limite par défaut ; chaque test de limite la restreint.
+    plans = {
+      assertCanCreateCampaign: jest.fn().mockResolvedValue(undefined),
+      assertCanAddMember: jest.fn().mockResolvedValue(undefined),
+      assertCopilotQuota: jest.fn().mockResolvedValue(undefined),
+      assertAiAdvanced: jest.fn().mockResolvedValue(undefined),
+      hasAiAdvanced: jest.fn().mockResolvedValue(true),
+    };
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         SimulationsService,
@@ -76,6 +93,7 @@ describe('SimulationsService', () => {
           provide: SIMULATION_ENGINE_TOKEN,
           useValue: { simulate: jest.fn() },
         },
+        { provide: PlanService, useValue: plans },
       ],
     }).compile();
 
@@ -128,6 +146,19 @@ describe('SimulationsService', () => {
         service.createSimulation('camp-1', dto, user),
       ).rejects.toThrow(BadRequestException);
       expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('should refuse on a plan without advanced AI, before any write', async () => {
+      prisma.campaign.findFirst.mockResolvedValue(campaign);
+      plans.assertAiAdvanced.mockRejectedValue(
+        new PlanLimitException('aiAdvanced', 'PRO', null),
+      );
+
+      await expect(
+        service.createSimulation('camp-1', dto, user),
+      ).rejects.toThrow(PlanLimitException);
+      expect(plans.assertAiAdvanced).toHaveBeenCalledWith('company-1');
+      expect(txClient.questionnaire.create).not.toHaveBeenCalled();
     });
 
     it('should write the questionnaire and answers through the tx client, not this.prisma', async () => {

@@ -14,6 +14,7 @@ import { SoumettreReponsesDto } from './dto/soumettre-reponses.dto';
 import type { SimulationEngineInterface } from './clients/simulation-engine.interface';
 import { SIMULATION_ENGINE_TOKEN } from './clients/simulation-engine.interface';
 import { CampaignStatus } from '@prisma/client';
+import { PlanService } from '../billing/plan.service';
 
 @Injectable()
 export class SimulationsService {
@@ -23,6 +24,7 @@ export class SimulationsService {
     private prisma: PrismaService,
     @Inject(SIMULATION_ENGINE_TOKEN)
     private simulationEngine: SimulationEngineInterface,
+    private plans: PlanService,
   ) {}
 
   async getQuestions() {
@@ -58,6 +60,7 @@ export class SimulationsService {
       throw new ForbiddenException('You must belong to a company.');
     }
     assertSameCompany(user, campaign.launchedBy.companyId, 'Campaign');
+    await this.plans.assertAiAdvanced(user.companyId);
 
     if (
       campaign.status === CampaignStatus.COMPLETED ||
