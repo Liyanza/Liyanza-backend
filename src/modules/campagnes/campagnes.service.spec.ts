@@ -1,4 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { PlanService } from '../billing/plan.service';
+import { PlanLimitException } from '../billing/plan-limits';
 import {
   BadRequestException,
   ConflictException,
@@ -43,6 +45,13 @@ type MockedTx = {
 };
 
 describe('CampagnesService', () => {
+  let plans: {
+    assertCanCreateCampaign: jest.Mock;
+    assertCanAddMember: jest.Mock;
+    assertCopilotQuota: jest.Mock;
+    assertAiAdvanced: jest.Mock;
+    hasAiAdvanced: jest.Mock;
+  };
   let service: CampagnesService;
   let prisma: MockedPrisma;
   let txClient: MockedTx;
@@ -60,6 +69,14 @@ describe('CampagnesService', () => {
       broadcast: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
     };
 
+    // Formule sans limite par défaut ; chaque test de limite la restreint.
+    plans = {
+      assertCanCreateCampaign: jest.fn().mockResolvedValue(undefined),
+      assertCanAddMember: jest.fn().mockResolvedValue(undefined),
+      assertCopilotQuota: jest.fn().mockResolvedValue(undefined),
+      assertAiAdvanced: jest.fn().mockResolvedValue(undefined),
+      hasAiAdvanced: jest.fn().mockResolvedValue(true),
+    };
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         CampagnesService,
@@ -93,6 +110,7 @@ describe('CampagnesService', () => {
             ),
           },
         },
+        { provide: PlanService, useValue: plans },
       ],
     }).compile();
 
@@ -375,6 +393,36 @@ describe('CampagnesService', () => {
   });
 
   describe('create', () => {
+    const validDto = {
+      name: 'C',
+      objective: 'Awareness',
+      startDate: '2099-01-01',
+      endDate: '2099-02-01',
+      plannedBudget: 100,
+      type: CampaignType.RADIO,
+    };
+
+    it('should refuse a new campaign when the plan limit is reached (FREE)', async () => {
+      plans.assertCanCreateCampaign.mockRejectedValue(
+        new PlanLimitException('campaigns', 'PRO', 1),
+      );
+
+      await expect(service.create(validDto, user)).rejects.toThrow(
+        PlanLimitException,
+      );
+      expect(plans.assertCanCreateCampaign).toHaveBeenCalledWith('company-1');
+      expect(prisma.campaign.create).not.toHaveBeenCalled();
+    });
+
+    it('should create the campaign when the plan allows it', async () => {
+      prisma.campaign.create.mockResolvedValue({ id: 'c1' });
+
+      await expect(service.create(validDto, user)).resolves.toEqual({
+        id: 'c1',
+      });
+      expect(plans.assertCanCreateCampaign).toHaveBeenCalledWith('company-1');
+    });
+
     it('should throw BadRequestException if plannedBudget <= 0', async () => {
       await expect(
         service.create(

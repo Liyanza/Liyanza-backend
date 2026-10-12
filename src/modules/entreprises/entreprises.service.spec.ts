@@ -105,6 +105,29 @@ describe('EntreprisesService', () => {
       });
     });
 
+    it('should start a 14-day PRO trial for the new company', async () => {
+      const user = { ...mockUser, companyId: null };
+      txClient.company.create.mockResolvedValue(mockCompany);
+      txClient.user.updateMany.mockResolvedValue({ count: 1 });
+      const before = Date.now();
+
+      await service.create(
+        { name: 'New Co', businessSector: 'Agri', address: 'Yaoundé' },
+        user,
+      );
+
+      const [[{ data }]] = txClient.company.create.mock.calls as [
+        [{ data: { trialEndsAt: Date } }],
+      ];
+      const fourteenDays = 14 * 24 * 60 * 60 * 1000;
+      expect(data.trialEndsAt.getTime()).toBeGreaterThanOrEqual(
+        before + fourteenDays,
+      );
+      expect(data.trialEndsAt.getTime()).toBeLessThanOrEqual(
+        Date.now() + fourteenDays,
+      );
+    });
+
     // RÉGRESSION (race condition) : si l'utilisateur a été rattaché à une
     // entreprise entre-temps, la transaction doit être annulée — sans quoi
     // une entreprise orpheline, sans aucun administrateur, reste en base.

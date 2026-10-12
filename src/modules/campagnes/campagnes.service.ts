@@ -18,10 +18,14 @@ import {
   Campaign,
 } from '@prisma/client';
 import { CampaignStateMachine } from './state/campaign-state-machine';
+import { PlanService } from '../billing/plan.service';
 
 @Injectable()
 export class CampagnesService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private plans: PlanService,
+  ) {}
 
   /**
    * Create a new campaign (status defaults to DRAFT)
@@ -42,6 +46,9 @@ export class CampagnesService {
     if (dto.plannedBudget <= 0) {
       throw new BadRequestException('Planned budget must be greater than 0.');
     }
+
+    // Formule FREE : une seule campagne active (brouillons compris).
+    await this.plans.assertCanCreateCampaign(user.companyId);
 
     return this.prisma.campaign.create({
       data: {

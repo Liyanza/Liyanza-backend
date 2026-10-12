@@ -7,6 +7,7 @@ import {
   IsNumber,
   IsString,
   IsUrl,
+  Matches,
   Min,
   MinLength,
   NotEquals,
@@ -431,6 +432,55 @@ export class EnvironmentVariables {
   @IsOptional()
   @IsUrl({ require_tld: false, protocols: ['http', 'https'] })
   INVITATION_URL?: string;
+
+  /**
+   * Abonnements payants via Chariow. Toutes facultatives : sans clé API ou
+   * sans les quatre produits, la vente est désactivée (`billingEnabled:
+   * false`) et le serveur démarre quand même. `@ValidateIf` plutôt que
+   * `@IsOptional()` : une variable laissée vide dans un `.env` donne une
+   * chaîne vide, à traiter comme absente.
+   */
+  @ValidateIf((env: EnvironmentVariables) => !!env.CHARIOW_API_KEY)
+  @IsString()
+  @Matches(/^sk_/, { message: 'CHARIOW_API_KEY must start with "sk_".' })
+  CHARIOW_API_KEY?: string;
+
+  /**
+   * Secret de signature des Pulses (webhooks) Chariow. Absent : toute Pulse
+   * est refusée (401), aucun abonnement ne peut être accordé.
+   */
+  @ValidateIf((env: EnvironmentVariables) => !!env.CHARIOW_PULSE_SECRET)
+  @IsString()
+  @MinLength(16, {
+    message: 'CHARIOW_PULSE_SECRET must be at least 16 characters long.',
+  })
+  CHARIOW_PULSE_SECRET?: string;
+
+  /** Identifiants des produits Chariow (`prd_…`) de chaque formule. */
+  @ValidateIf((env: EnvironmentVariables) => !!env.CHARIOW_PRODUCT_PRO_MONTHLY)
+  @Matches(/^prd_\w+$/)
+  CHARIOW_PRODUCT_PRO_MONTHLY?: string;
+
+  @ValidateIf((env: EnvironmentVariables) => !!env.CHARIOW_PRODUCT_PRO_YEARLY)
+  @Matches(/^prd_\w+$/)
+  CHARIOW_PRODUCT_PRO_YEARLY?: string;
+
+  @ValidateIf(
+    (env: EnvironmentVariables) => !!env.CHARIOW_PRODUCT_BUSINESS_MONTHLY,
+  )
+  @Matches(/^prd_\w+$/)
+  CHARIOW_PRODUCT_BUSINESS_MONTHLY?: string;
+
+  @ValidateIf(
+    (env: EnvironmentVariables) => !!env.CHARIOW_PRODUCT_BUSINESS_YEARLY,
+  )
+  @Matches(/^prd_\w+$/)
+  CHARIOW_PRODUCT_BUSINESS_YEARLY?: string;
+
+  /** Page du site où Chariow renvoie l'acheteur après le paiement. */
+  @ValidateIf((env: EnvironmentVariables) => !!env.BILLING_RETURN_URL)
+  @IsUrl({ require_tld: false, protocols: ['http', 'https'] })
+  BILLING_RETURN_URL?: string;
 }
 
 export function validate(config: Record<string, unknown>) {

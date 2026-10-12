@@ -97,6 +97,8 @@ model Company {
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
   deletedAt      DateTime?
+  /// Fin de l'essai PRO offert à la création (14 jours). Null : aucun essai.
+  trialEndsAt    DateTime?
 
   users           User[]
   aiConversations AiConversation[] // ← nouvelle relation inverse
@@ -104,6 +106,7 @@ model Company {
   tasks           Task[] // ← BACK-212
   media           Media[] // ← BACK-307
   socialAccounts  SocialAccount[] // ← BACK-501
+  subscriptions   Subscription[] // ← abonnements payants (Chariow)
 }
 
 /// Entité UTILISATEUR
@@ -143,6 +146,7 @@ model User {
   taskAssignments        TaskAssignee[] // ← BACK-212
   mediaUploaded          Media[] // ← BACK-307
   socialAccountsLinked   SocialAccount[] // ← BACK-501
+  subscriptionsPurchased Subscription[] // ← abonnements payés (Chariow)
 
   @@index([companyId])
 }
@@ -758,4 +762,62 @@ model CampaignAlert {
   campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
 
   @@index([campaignId, resolvedAt])
+}
+
+// =====================================================================
+// Abonnements payants (vente via Chariow)
+// =====================================================================
+
+/// Formules payantes. FREE n'est jamais stocké : c'est l'absence
+/// d'abonnement actif (et d'essai en cours).
+enum PlanTier {
+  PRO
+  BUSINESS
+}
+
+enum BillingPeriod {
+  MONTHLY
+  YEARLY
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  REVOKED
+}
+
+/// Un achat confirmé par Chariow (Pulse `successful.sale`). L'abonnement
+/// appartient à l'ENTREPRISE : un ADMIN paie, tous les membres en profitent.
+/// Un renouvellement de la même formule s'empile : `startsAt` = fin de la
+/// période précédente, d'où des périodes contiguës sans chevauchement.
+model Subscription {
+  id               String             @id @default(cuid())
+  plan             PlanTier
+  period           BillingPeriod
+  status           SubscriptionStatus @default(ACTIVE)
+  startsAt         DateTime
+  expiresAt        DateTime
+  chariowSaleId    String             @unique
+  chariowProductId String
+  licenseKey       String?            @unique
+  /// Email du client Chariow (minuscules) : sert à rattacher la licence.
+  customerEmail    String?
+  /// Montant formaté par Chariow (ex. "20 000 FCFA"), pour l'historique.
+  amount           String?
+  createdAt        DateTime           @default(now())
+
+  companyId     String
+  company       Company @relation(fields: [companyId], references: [id])
+  purchasedById String?
+  purchasedBy   User?   @relation(fields: [purchasedById], references: [id], onDelete: SetNull)
+
+  @@index([companyId])
+  @@index([chariowProductId, customerEmail])
+}
+
+/// Livraisons Pulse (webhooks Chariow) déjà reçues — `id` est l'en-tête
+/// `x-pulse-delivery-id`. Une livraison rejouée n'est jamais retraitée.
+model ChariowDelivery {
+  id         String   @id
+  event      String
+  receivedAt DateTime @default(now())
 }

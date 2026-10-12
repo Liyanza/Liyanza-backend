@@ -20,6 +20,8 @@ import { QueueService } from '../queue/queue.service';
 import { RedisService } from '../redis/redis.service';
 import { EMAIL_PROVIDER_TOKEN } from '../mail/interfaces/email-provider.interface';
 import type { EmailProvider } from '../mail/interfaces/email-provider.interface';
+import { PlanService } from '../billing/plan.service';
+import { PlanLimitException } from '../billing/plan-limits';
 
 /** Durée de validité d'une invitation envoyée à un compte existant. */
 const INVITATION_TTL_SECONDS = 7 * 24 * 60 * 60;
@@ -43,6 +45,7 @@ export class UsersService {
     private redisService: RedisService,
     private configService: ConfigService,
     @Inject(EMAIL_PROVIDER_TOKEN) private emailProvider: EmailProvider,
+    private plans: PlanService,
   ) {}
 
   private invitationKey(token: string): string {
@@ -83,6 +86,8 @@ export class UsersService {
     if (existing) {
       return this.inviteExistingUser(existing, dto.role, admin);
     }
+
+    await this.plans.assertCanAddMember(admin.companyId);
 
     const plainPassword = this.generateTemporaryPassword();
     const hashedPassword = await bcrypt.hash(plainPassword, 10);
@@ -168,6 +173,9 @@ export class UsersService {
     if (existing.deactivatedAt) {
       throw new ConflictException('This account has been deactivated.');
     }
+    // Contrôlé dès l'invitation (inutile d'envoyer un lien voué à l'échec),
+    // puis de nouveau à l'acceptation.
+    await this.plans.assertCanAddMember(admin.companyId!);
 
     const company = await this.prisma.company.findUnique({
       where: { id: admin.companyId! },
@@ -236,6 +244,21 @@ export class UsersService {
     }
 
     if (!user.companyId) {
+      // L'invitation peut dater d'avant un changement de formule (fin
+      // d'essai, révocation) : la limite de membres est revérifiée ici. Le
+      // lien reste alors valable, pour être accepté après une mise à niveau.
+      try {
+        await this.plans.assertCanAddMember(invitation.companyId);
+      } catch (error) {
+        if (error instanceof PlanLimitException) {
+          await this.redisService.set(
+            this.invitationKey(token),
+            raw,
+            INVITATION_TTL_SECONDS,
+          );
+        }
+        throw error;
+      }
       await this.prisma.user.update({
         where: { id: user.id },
         data: { companyId: invitation.companyId, role: invitation.role },

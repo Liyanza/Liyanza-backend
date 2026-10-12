@@ -1,4 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { PlanService } from '../billing/plan.service';
+import { PlanLimitException } from '../billing/plan-limits';
 import {
   BadRequestException,
   ForbiddenException,
@@ -21,6 +23,13 @@ import { SimulationAnalysisClient } from './clients/simulation-analysis.client';
 import { LocalBenchmarksService } from './performance/local-benchmarks.service';
 
 describe('DigitalCampaignsService', () => {
+  let plans: {
+    assertCanCreateCampaign: jest.Mock;
+    assertCanAddMember: jest.Mock;
+    assertCopilotQuota: jest.Mock;
+    assertAiAdvanced: jest.Mock;
+    hasAiAdvanced: jest.Mock;
+  };
   let service: DigitalCampaignsService;
   let prisma: {
     campaign: { findFirst: jest.Mock };
@@ -63,6 +72,14 @@ describe('DigitalCampaignsService', () => {
     // Par défaut : pas encore de références locales.
     localBenchmarks = { getCalibration: jest.fn().mockResolvedValue(null) };
 
+    // Formule sans limite par défaut ; chaque test de limite la restreint.
+    plans = {
+      assertCanCreateCampaign: jest.fn().mockResolvedValue(undefined),
+      assertCanAddMember: jest.fn().mockResolvedValue(undefined),
+      assertCopilotQuota: jest.fn().mockResolvedValue(undefined),
+      assertAiAdvanced: jest.fn().mockResolvedValue(undefined),
+      hasAiAdvanced: jest.fn().mockResolvedValue(true),
+    };
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         DigitalCampaignsService,
@@ -94,6 +111,7 @@ describe('DigitalCampaignsService', () => {
         },
         { provide: SimulationAnalysisClient, useValue: simulationAnalysis },
         { provide: LocalBenchmarksService, useValue: localBenchmarks },
+        { provide: PlanService, useValue: plans },
       ],
     }).compile();
 
@@ -433,6 +451,20 @@ describe('DigitalCampaignsService', () => {
       });
     });
 
+    it('should refuse the analysis on a plan without advanced AI', async () => {
+      prisma.campaign.findFirst.mockResolvedValue(campaignWithDates);
+      plans.assertAiAdvanced.mockRejectedValue(
+        new PlanLimitException('aiAdvanced', 'PRO', null),
+      );
+
+      await expect(
+        service.analyzeExistingSimulation('camp-1', 'sim-1', user),
+      ).rejects.toThrow(PlanLimitException);
+      expect(plans.assertAiAdvanced).toHaveBeenCalledWith('company-1');
+      expect(simulationAnalysis.analyze).not.toHaveBeenCalled();
+      expect(prisma.digitalSimulation.update).not.toHaveBeenCalled();
+    });
+
     it('should return an already analyzed simulation without calling the AI', async () => {
       prisma.campaign.findFirst.mockResolvedValue(campaignWithDates);
       prisma.digitalSimulation.findFirst.mockResolvedValue({
@@ -711,6 +743,23 @@ describe('DigitalCampaignsService', () => {
 
         await service.createSimulation('camp-1', user);
 
+        const [{ data }] = prisma.digitalSimulation.create.mock.calls[0] as [
+          { data: Record<string, unknown> },
+        ];
+        expect(data.narrativeSummary).toBe('Texte de repli du moteur');
+        expect(data).not.toHaveProperty('aiAnalysis');
+      });
+
+      // Formule FREE : les chiffres sont enregistrés, l'analyse IA est
+      // simplement omise (comme un service IA indisponible), sans erreur.
+      it('should save the figures without calling the AI on a plan without advanced AI', async () => {
+        plans.hasAiAdvanced.mockResolvedValue(false);
+        simulationAnalysis.analyze.mockResolvedValue(analysis);
+
+        await service.createSimulation('camp-1', user);
+
+        expect(plans.hasAiAdvanced).toHaveBeenCalledWith('company-1');
+        expect(simulationAnalysis.analyze).not.toHaveBeenCalled();
         const [{ data }] = prisma.digitalSimulation.create.mock.calls[0] as [
           { data: Record<string, unknown> },
         ];

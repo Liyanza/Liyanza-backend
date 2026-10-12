@@ -18,6 +18,10 @@ const helmet: () => RequestHandler =
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     logger: ['error', 'warn', 'log'],
+    // Conserve le corps brut (`req.rawBody`) à côté du JSON parsé : la
+    // signature HMAC des Pulses Chariow porte sur les octets reçus, qu'un
+    // JSON re-sérialisé ne reproduit pas fidèlement.
+    rawBody: true,
   });
 
   // Utiliser notre logger personnalisé
