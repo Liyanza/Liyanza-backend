@@ -1,5 +1,6 @@
 import {
   BadGatewayException,
+  BadRequestException,
   Injectable,
   Logger,
   ServiceUnavailableException,
@@ -18,6 +19,7 @@ export interface ChariowCheckoutRequest {
   last_name: string;
   phone: { number: string; country_code: string };
   redirect_url?: string;
+  discount_code?: string;
   customer_ip?: string;
   custom_metadata: Record<string, string>;
 }
@@ -89,6 +91,14 @@ export class ChariowClient {
       this.logger.error(
         `Chariow checkout rejected (HTTP ${response.status}) for product ${body.product_id}: ${detail}`,
       );
+      // Seul un code de réduction refusé est une erreur de l'utilisateur :
+      // Chariow répond 422 (code inconnu, expiré ou épuisé).
+      if (response.status === 422 && body.discount_code) {
+        throw new BadRequestException({
+          code: 'DISCOUNT_INVALID',
+          message: "Ce code de réduction n'est pas valide pour cette offre.",
+        });
+      }
       throw new BadGatewayException(PAYMENT_UNAVAILABLE);
     }
 

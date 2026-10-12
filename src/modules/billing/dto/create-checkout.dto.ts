@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   IsDefined,
   IsEnum,
@@ -42,4 +42,16 @@ export class CreateCheckoutDto {
   @ValidateNested()
   @Type(() => CheckoutPhoneDto)
   phone!: CheckoutPhoneDto;
+
+  /** Code de réduction créé dans la boutique Chariow, appliqué au paiement. */
+  @ApiProperty({ example: 'LANCEMENT20', required: false })
+  @IsOptional()
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim() || undefined : value,
+  )
+  @IsString()
+  @Matches(/^[\w-]{1,100}$/, {
+    message: 'discountCode must contain letters, digits, - or _ only.',
+  })
+  discountCode?: string;
 }
