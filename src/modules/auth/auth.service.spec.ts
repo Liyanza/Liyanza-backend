@@ -1,6 +1,11 @@
 /* eslint-disable @typescript-eslint/unbound-method */
 import { Test, TestingModule } from '@nestjs/testing';
-import { ConflictException, UnauthorizedException } from '@nestjs/common';
+import {
+  ConflictException,
+  NotFoundException,
+  ServiceUnavailableException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
@@ -8,6 +13,7 @@ import { AuthService } from './auth.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
 import { Prisma, Role } from '@prisma/client';
+import { DEMO_USER_EMAIL } from '../demo/demo.constants';
 import { EMAIL_PROVIDER_TOKEN } from '../mail/interfaces/email-provider.interface';
 import {
   GOOGLE_OAUTH_CLIENT_TOKEN,
@@ -928,6 +934,137 @@ describe('AuthService', () => {
       expect(redisService.del).toHaveBeenCalledWith('refresh:u1:j1');
       expect(redisService.delByPattern).not.toHaveBeenCalled();
       expect(result).toEqual({ success: true });
+    });
+  });
+
+  // ------------------------------------------------------------------
+  // Démo publique
+  // ------------------------------------------------------------------
+  describe('demo account', () => {
+    const demoUser = {
+      id: 'demo-user',
+      email: DEMO_USER_EMAIL,
+      password: null,
+      firstName: 'Visiteur',
+      lastName: 'Démo',
+      role: Role.ADMIN,
+      companyId: 'demo-company',
+      deactivatedAt: null,
+      company: { isDemo: true },
+    };
+
+    it('should log in as the demo user with the same response shape as login()', async () => {
+      prisma.user.findUnique.mockResolvedValue(demoUser);
+      jwtService.sign.mockReturnValueOnce('access-token');
+      jwtService.sign.mockReturnValueOnce('refresh-token');
+
+      const result = await service.loginDemo();
+
+      expect(prisma.user.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { email: DEMO_USER_EMAIL } }),
+      );
+      expect(result).toEqual({
+        accessToken: 'access-token',
+        refreshToken: 'refresh-token',
+        user: {
+          id: 'demo-user',
+          email: DEMO_USER_EMAIL,
+          firstName: 'Visiteur',
+          lastName: 'Démo',
+          role: Role.ADMIN,
+        },
+      });
+      expect(redisService.set).toHaveBeenCalledWith(
+        expect.stringMatching(/^refresh:demo-user:/),
+        '1',
+        expect.any(Number),
+      );
+    });
+
+    it('should answer 404 when the demo is disabled (DEMO_ENABLED=false)', async () => {
+      configService.get.mockImplementation((key: string) =>
+        key === 'DEMO_ENABLED' ? 'false' : undefined,
+      );
+      await expect(service.loginDemo()).rejects.toThrow(NotFoundException);
+      expect(prisma.user.findUnique).not.toHaveBeenCalled();
+      expect(jwtService.sign).not.toHaveBeenCalled();
+    });
+
+    it('should answer 503 while the demo data does not exist yet', async () => {
+      prisma.user.findUnique.mockResolvedValue(null);
+      await expect(service.loginDemo()).rejects.toThrow(
+        ServiceUnavailableException,
+      );
+    });
+
+    // Jamais de session sans mot de passe sur une entreprise réelle.
+    it('should refuse when the demo account is not in the demo company', async () => {
+      prisma.user.findUnique.mockResolvedValue({
+        ...demoUser,
+        company: { isDemo: false },
+      });
+      await expect(service.loginDemo()).rejects.toThrow(
+        ServiceUnavailableException,
+      );
+      expect(jwtService.sign).not.toHaveBeenCalled();
+    });
+
+    it('should never accept a password for the demo account', async () => {
+      prisma.user.findUnique.mockResolvedValue(demoUser);
+      await expect(
+        service.login({ email: DEMO_USER_EMAIL, password: 'anything-at-all' }),
+      ).rejects.toThrow(UnauthorizedException);
+    });
+
+    it('should not send a password reset e-mail to a demo account', async () => {
+      prisma.user.findUnique.mockResolvedValue(demoUser);
+      await expect(
+        service.forgotPassword({ email: DEMO_USER_EMAIL }),
+      ).resolves.toEqual({ success: true });
+      expect(redisService.set).not.toHaveBeenCalled();
+      expect(emailProvider.send).not.toHaveBeenCalled();
+    });
+
+    it('should refuse to register an address of the demo domain', async () => {
+      await expect(
+        service.register({
+          email: 'someone@demo.kiyanza.com',
+          password: 'SuperSecret1',
+          firstName: 'A',
+          lastName: 'B',
+          phone: '+237600000000',
+        }),
+      ).rejects.toThrow(ConflictException);
+      expect(prisma.user.create).not.toHaveBeenCalled();
+    });
+
+    it('should never link a demo account to Google', async () => {
+      googleIdTokenVerifier.verifyIdToken.mockResolvedValue({
+        providerId: 'g-1',
+        email: DEMO_USER_EMAIL,
+        firstName: 'X',
+        lastName: 'Y',
+      });
+      await expect(
+        service.loginWithGoogleIdToken({ idToken: 'token' }),
+      ).rejects.toThrow(UnauthorizedException);
+      expect(prisma.user.update).not.toHaveBeenCalled();
+      expect(prisma.user.create).not.toHaveBeenCalled();
+    });
+
+    // Tous les visiteurs partagent le compte : « déconnecter partout »
+    // fermerait la session de chacun d'eux.
+    it('should never revoke every session of the shared demo account', async () => {
+      jwtService.verify.mockImplementation(() => {
+        throw new Error('bad token');
+      });
+      await expect(
+        service.logout('demo-user', 'unreadable', true),
+      ).resolves.toEqual({ success: true });
+      await expect(
+        service.logout('demo-user', undefined, true),
+      ).resolves.toEqual({ success: true });
+      expect(redisService.delByPattern).not.toHaveBeenCalled();
     });
   });
 });

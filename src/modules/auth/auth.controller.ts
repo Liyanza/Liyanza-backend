@@ -29,6 +29,7 @@ import { OAuthExchangeDto } from './dto/oauth-exchange.dto';
 import { GoogleMobileLoginDto } from './dto/google-mobile-login.dto';
 import { Public } from './decorators/public.decorator';
 import { Roles } from './decorators/roles.decorator';
+import { DemoAllowed } from './decorators/demo-allowed.decorator';
 import { AuthenticatedUser } from './interfaces/authenticated-user.interface';
 
 interface AuthenticatedRequest extends ExpressRequest {
@@ -62,6 +63,31 @@ export class AuthController {
   @ApiResponse({ status: 401, description: 'Invalid credentials' })
   async login(@Body() dto: LoginDto) {
     return this.authService.login(dto);
+  }
+
+  /**
+   * Démo publique (« Voir la démo » du site) : connecte n'importe quel
+   * visiteur au compte de l'entreprise fictive, en lecture seule
+   * (`DemoReadOnlyGuard`). Même réponse que `POST /auth/login`, pour que le
+   * site pose ses cookies de session exactement de la même façon. Corps
+   * ignoré (le site envoie `{}`).
+   *
+   * Throttle compté par IP RÉELLE du visiteur : le `getTracker` global
+   * (`resolveClientIp`, secret `WEB_PROXY_SECRET`) s'applique ici aussi —
+   * sinon les 10/min seraient partagés par tous les visiteurs relayés par
+   * Vercel.
+   */
+  @Public()
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Post('demo')
+  @ApiOperation({
+    summary: 'Log in to the read-only public demo company (no credentials)',
+  })
+  @ApiResponse({ status: 201, description: 'Authenticated as the demo user' })
+  @ApiResponse({ status: 404, description: 'Demo disabled on this server' })
+  @ApiResponse({ status: 503, description: 'Demo data not ready yet' })
+  async demo() {
+    return this.authService.loginDemo();
   }
 
   @Public()
@@ -236,6 +262,7 @@ export class AuthController {
   // sessions de l'utilisateur sont révoquées — comportement « déconnexion de
   // tous les appareils ».
   @Post('logout')
+  @DemoAllowed()
   @ApiBearerAuth()
   @ApiOperation({
     summary:
@@ -243,7 +270,11 @@ export class AuthController {
   })
   @ApiResponse({ status: 201, description: 'Logged out' })
   async logout(@Request() req: AuthenticatedRequest, @Body() dto: LogoutDto) {
-    return this.authService.logout(req.user.userId, dto.refreshToken);
+    return this.authService.logout(
+      req.user.userId,
+      dto.refreshToken,
+      req.user.demo === true,
+    );
   }
 
   /**

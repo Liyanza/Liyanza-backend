@@ -60,6 +60,9 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         role: true,
         companyId: true,
         deactivatedAt: true,
+        // Relu à chaque requête comme le rôle : une session de démo est en
+        // lecture seule (DemoReadOnlyGuard), quoi que dise le token.
+        company: { select: { isDemo: true } },
       },
     });
 
@@ -74,6 +77,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       email: user.email,
       role: user.role,
       companyId: user.companyId,
+      demo: user.company?.isDemo ?? false,
     };
   }
 }

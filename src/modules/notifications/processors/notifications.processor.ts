@@ -9,6 +9,7 @@ import {
   CreateNotificationDto,
   NotificationType,
 } from '../dto/create-notification.dto';
+import { isDemoEmail } from '../../demo/demo.constants';
 
 interface SendTemporaryPasswordPayload {
   email: string;
@@ -93,6 +94,12 @@ export class NotificationsProcessor extends WorkerHost {
       throw error;
     }
 
+    // Comptes de la démo publique : notification in-app seulement, leurs
+    // adresses n'ont pas de boîte (un envoi reviendrait en erreur).
+    if (isDemoEmail(notification.recipient.email)) {
+      return;
+    }
+
     await this.emailProvider.send({
       to: notification.recipient.email,
       subject: dto.title,
@@ -104,6 +111,9 @@ export class NotificationsProcessor extends WorkerHost {
     job: Job<SendTemporaryPasswordPayload>,
   ): Promise<void> {
     const { email, firstName, temporaryPassword } = job.data;
+    if (isDemoEmail(email)) {
+      return;
+    }
     await this.emailProvider.send({
       to: email,
       subject: 'Votre compte Liyanza — mot de passe temporaire',

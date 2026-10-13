@@ -99,6 +99,10 @@ model Company {
   deletedAt      DateTime?
   /// Fin de l'essai PRO offert à la création (14 jours). Null : aucun essai.
   trialEndsAt    DateTime?
+  /// Entreprise fictive de la démo publique (« Voir la démo »). Ses
+  /// utilisateurs sont en lecture seule (DemoReadOnlyGuard) et ses données
+  /// sont recréées chaque nuit par DemoService : jamais une vraie entreprise.
+  isDemo         Boolean   @default(false)
 
   users           User[]
   aiConversations AiConversation[] // ← nouvelle relation inverse

@@ -1,4 +1,5 @@
 import { CampaignStatus, PlanTier, SubscriptionStatus } from '@prisma/client';
+import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { PlanLimitException, requiredPlanFor } from './plan-limits';
 import { PlanService } from './plan.service';
@@ -7,6 +8,7 @@ const DAY = 24 * 60 * 60 * 1000;
 
 describe('PlanService', () => {
   let service: PlanService;
+  let config: { get: jest.Mock };
   let prisma: {
     company: { findUnique: jest.Mock };
     subscription: { findMany: jest.Mock };
@@ -33,7 +35,11 @@ describe('PlanService', () => {
       user: { count: jest.fn().mockResolvedValue(0) },
       aiMessage: { count: jest.fn().mockResolvedValue(0) },
     };
-    service = new PlanService(prisma as unknown as PrismaService);
+    config = { get: jest.fn().mockReturnValue(undefined) };
+    service = new PlanService(
+      prisma as unknown as PrismaService,
+      config as unknown as ConfigService,
+    );
   });
 
   describe('getEffectivePlan', () => {
@@ -200,6 +206,42 @@ describe('PlanService', () => {
       ).toBe(0);
 
       prisma.aiMessage.count.mockResolvedValue(4);
+      await expect(service.assertCopilotQuota('c1')).resolves.toBe(undefined);
+    });
+
+    it('should cap the Copilot of the demo company (DEMO_COPILOT_DAILY_MESSAGES, default 30) while keeping PRO', async () => {
+      prisma.company.findUnique.mockResolvedValue({
+        trialEndsAt: at(365),
+        isDemo: true,
+      });
+      await expect(
+        service.getEffectivePlan('demo', now),
+      ).resolves.toMatchObject({
+        plan: 'PRO',
+        limits: { copilotDailyMessages: 30, aiAdvanced: true },
+      });
+
+      prisma.aiMessage.count.mockResolvedValue(30);
+      await expect(service.assertCopilotQuota('demo')).rejects.toMatchObject({
+        feature: 'copilot',
+        limit: 30,
+      });
+      prisma.aiMessage.count.mockResolvedValue(29);
+      await expect(service.assertCopilotQuota('demo')).resolves.toBe(undefined);
+
+      config.get.mockReturnValue(3);
+      prisma.aiMessage.count.mockResolvedValue(3);
+      await expect(service.assertCopilotQuota('demo')).rejects.toMatchObject({
+        limit: 3,
+      });
+    });
+
+    it('should not cap the Copilot of a real PRO company', async () => {
+      prisma.company.findUnique.mockResolvedValue({
+        trialEndsAt: at(3),
+        isDemo: false,
+      });
+      prisma.aiMessage.count.mockResolvedValue(1000);
       await expect(service.assertCopilotQuota('c1')).resolves.toBe(undefined);
     });
 

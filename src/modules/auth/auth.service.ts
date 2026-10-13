@@ -4,6 +4,8 @@ import {
   Logger,
   UnauthorizedException,
   ConflictException,
+  NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { randomBytes, randomUUID } from 'crypto';
@@ -34,6 +36,11 @@ import type {
   OAuthUserProfile,
   GoogleIdTokenVerifier,
 } from './clients/oauth-login-client.interface';
+import {
+  DEMO_USER_EMAIL,
+  isDemoEmail,
+  isDemoEnabled,
+} from '../demo/demo.constants';
 
 type OAuthProvider = 'google' | 'facebook';
 
@@ -170,6 +177,12 @@ export class AuthService {
   // ------------------------------------------------------------------
 
   async register(dto: RegisterDto) {
+    // Domaine réservé aux comptes de la démo publique : un compte réel à
+    // cette adresse pourrait se faire passer pour un membre de la démo.
+    if (isDemoEmail(dto.email)) {
+      throw new ConflictException('This email is already in use.');
+    }
+
     const hashedPassword = await bcrypt.hash(dto.password, SALT_ROUNDS);
 
     // SÉCURITÉ (correctif audit — faille critique) : le rôle et l'entreprise
@@ -319,7 +332,7 @@ export class AuthService {
    * Révoque une session. Si un refresh token est fourni, seule cette session
    * est fermée ; sinon toutes les sessions de l'utilisateur le sont.
    */
-  async logout(userId: string, refreshToken?: string) {
+  async logout(userId: string, refreshToken?: string, demo = false) {
     if (refreshToken) {
       try {
         const payload = this.jwtService.verify<JwtPayload>(refreshToken);
@@ -336,8 +349,55 @@ export class AuthService {
       }
     }
 
+    // Démo publique : tous les visiteurs partagent le même compte. Révoquer
+    // « toutes les sessions » déconnecterait chacun d'eux — on s'en tient à
+    // la session courante, déjà expirée côté appelant s'il n'a rien envoyé.
+    if (demo) {
+      return { success: true };
+    }
+
     await this.redisService.delByPattern(`refresh:${userId}:*`);
     return { success: true };
+  }
+
+  /**
+   * Démo publique : session du compte ADMIN de l'entreprise fictive, sans
+   * mot de passe (le compte n'en a pas, `login()` le refuse donc toujours).
+   * Même réponse que `login()`. 404 si la démo est désactivée
+   * (`DEMO_ENABLED=false`), 503 tant que `DemoService` n'a pas encore créé
+   * les données (premier démarrage).
+   */
+  async loginDemo() {
+    if (!isDemoEnabled(this.configService)) {
+      throw new NotFoundException('Demo is not available.');
+    }
+
+    const user = await this.prisma.user.findUnique({
+      where: { email: DEMO_USER_EMAIL },
+      include: { company: { select: { isDemo: true } } },
+    });
+    // Le compte doit appartenir à l'entreprise de démo : jamais de session
+    // sans mot de passe sur une entreprise réelle, même par erreur de données.
+    if (!user || user.deactivatedAt || !user.company?.isDemo) {
+      throw new ServiceUnavailableException(
+        'The demo is being prepared. Please try again in a minute.',
+      );
+    }
+
+    const accessToken = this.signAccessToken(user);
+    const refreshToken = await this.issueRefreshToken(user);
+
+    return {
+      accessToken,
+      refreshToken,
+      user: {
+        id: user.id,
+        email: user.email,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        role: user.role,
+      },
+    };
   }
 
   // ------------------------------------------------------------------
@@ -589,6 +649,12 @@ export class AuthService {
     provider: OAuthProvider,
     profile: OAuthUserProfile,
   ): Promise<User> {
+    // Un compte de démo ne se lie jamais à Google/Facebook (il ouvrirait une
+    // session hors de `POST /auth/demo`, sur le compte partagé).
+    if (isDemoEmail(profile.email)) {
+      throw new UnauthorizedException('This account cannot use social login.');
+    }
+
     const existingByProviderId = await this.prisma.user.findUnique({
       where:
         provider === 'google'
@@ -661,7 +727,8 @@ export class AuthService {
       where: { email: dto.email },
     });
 
-    if (user && !user.deactivatedAt) {
+    // Comptes de la démo publique : jamais de mot de passe (ni d'e-mail).
+    if (user && !user.deactivatedAt && !isDemoEmail(user.email)) {
       const token = randomBytes(32).toString('base64url');
       await this.redisService.set(
         this.passwordResetKey(token),
