@@ -25,6 +25,7 @@ import {
 import { AssistantIService } from './assistant-ia.service';
 import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { DemoAllowed } from '../auth/decorators/demo-allowed.decorator';
 import { CreateConversationDto } from './dto/create-conversation.dto';
 import { EnvoyerMessageDto } from './dto/envoyer-message.dto';
 import { UpdateConversationDto } from './dto/update-conversation.dto';
@@ -36,6 +37,11 @@ interface AuthenticatedRequest extends ExpressRequest {
 }
 
 /**
+ * Les routes du Copilot qui créent une conversation ou un message portent
+ * `@DemoAllowed()` : l'assistant est un argument clé de la démo publique,
+ * dont le volume reste plafonné (`DEMO_COPILOT_DAILY_MESSAGES`, voir
+ * `PlanService`). Renommer ou supprimer une conversation reste refusé.
+ *
  * Rôles ayant accès au Copilot (assistant du dashboard) : tous les membres
  * d'une entreprise, SAUF `PROVIDER` — un prestataire externe (afficheur,
  * radio…) ne doit pas pouvoir interroger les données marketing du client.
@@ -54,6 +60,7 @@ export class AssistantIController {
 
   @Post('conversations')
   @Roles(...COPILOT_ROLES)
+  @DemoAllowed()
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Create a new AI assistant conversation' })
   @ApiResponse({ status: 201, description: 'Conversation created' })
@@ -119,6 +126,7 @@ export class AssistantIController {
    */
   @Post('conversations/:id/messages')
   @Roles(...COPILOT_ROLES)
+  @DemoAllowed()
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Send a message and get the AI assistant reply' })
   @ApiResponse({ status: 200, description: 'AI reply persisted and returned' })
@@ -139,6 +147,7 @@ export class AssistantIController {
    */
   @Post('conversations/:id/messages/stream')
   @Roles(...COPILOT_ROLES)
+  @DemoAllowed()
   @ApiOperation({ summary: 'Send a message and stream the AI reply (SSE)' })
   @ApiResponse({ status: 200, description: 'text/event-stream' })
   async envoyerMessageStream(
@@ -159,6 +168,7 @@ export class AssistantIController {
 
   @Post('conversations/:id/regenerate')
   @Roles(...COPILOT_ROLES)
+  @DemoAllowed()
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Replace the last AI reply with a new one' })
   @ApiResponse({ status: 200, description: 'Regenerated AI message' })
@@ -176,6 +186,7 @@ export class AssistantIController {
 
   @Patch('conversations/:id/messages/:messageId/feedback')
   @Roles(...COPILOT_ROLES)
+  @DemoAllowed()
   @ApiOperation({ summary: 'Rate an AI reply (UP / DOWN / null)' })
   @ApiResponse({ status: 200, description: 'Feedback saved' })
   async setMessageFeedback(

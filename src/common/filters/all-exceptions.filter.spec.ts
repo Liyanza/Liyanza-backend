@@ -2,6 +2,7 @@ import { ArgumentsHost, BadRequestException } from '@nestjs/common';
 import { LoggerService } from '../../modules/logger/logger.service';
 import { RequestContextService } from '../context/request-context.service';
 import { PlanLimitException } from '../../modules/billing/plan-limits';
+import { DemoReadOnlyException } from '../../modules/auth/guards/demo-read-only.guard';
 import { AllExceptionsFilter } from './all-exceptions.filter';
 
 describe('AllExceptionsFilter', () => {
@@ -49,5 +50,15 @@ describe('AllExceptionsFilter', () => {
     expect(body).not.toHaveProperty('code');
     expect(body).not.toHaveProperty('error');
     expect(body.message).toBe('Nope.');
+  });
+
+  it('should relay the DEMO_READ_ONLY code of the public demo', () => {
+    const { status, body } = run(new DemoReadOnlyException());
+    expect(status).toHaveBeenCalledWith(403);
+    expect(body).toMatchObject({
+      statusCode: 403,
+      code: 'DEMO_READ_ONLY',
+      message: expect.any(String) as string,
+    });
   });
 });

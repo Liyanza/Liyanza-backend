@@ -14,6 +14,14 @@ export interface AuthenticatedUser {
   email: string;
   role: Role;
   companyId: string | null;
+  /**
+   * Session de la démo publique (entreprise `Company.isDemo`) : lecture
+   * seule, voir `DemoReadOnlyGuard`. Toujours renseigné par `JwtStrategy`
+   * (et donc exposé par `GET /auth/me`) ; facultatif dans le type pour que
+   * les utilisateurs construits ailleurs (tests, appels internes) restent
+   * des sessions normales.
+   */
+  demo?: boolean;
 }
 
 /**

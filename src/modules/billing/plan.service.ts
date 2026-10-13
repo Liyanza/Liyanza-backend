@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { CampaignStatus, PlanTier, SubscriptionStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import {
@@ -9,6 +10,7 @@ import {
   type PlanName,
   type PlanSource,
 } from './plan-limits';
+import { demoCopilotDailyMessages } from '../demo/demo.constants';
 
 export interface EffectivePlan {
   plan: PlanName;
@@ -49,7 +51,10 @@ const startOfUtcDay = (now: Date): Date =>
  */
 @Injectable()
 export class PlanService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private config: ConfigService,
+  ) {}
 
   /**
    * Plus haute formule parmi les abonnements ACTIVE en cours
@@ -62,7 +67,7 @@ export class PlanService {
     const [company, subscriptions] = await Promise.all([
       this.prisma.company.findUnique({
         where: { id: companyId },
-        select: { trialEndsAt: true },
+        select: { trialEndsAt: true, isDemo: true },
       }),
       // Les abonnements futurs (renouvellements empilés) sont lus aussi :
       // ils prolongent la date de fin affichée de la formule en cours.
@@ -76,7 +81,24 @@ export class PlanService {
       }),
     ]);
     const trialEndsAt = company?.trialEndsAt ?? null;
+    const plan = this.resolvePlan(subscriptions, trialEndsAt, now);
+    // Démo publique : formule PRO (essai renouvelé à chaque remise à zéro)
+    // pour montrer les fonctions avancées, mais Copilot plafonné pour toute
+    // l'entreprise — tous les visiteurs partagent ce quota du LLM.
+    if (company?.isDemo) {
+      plan.limits = {
+        ...plan.limits,
+        copilotDailyMessages: demoCopilotDailyMessages(this.config),
+      };
+    }
+    return plan;
+  }
 
+  private resolvePlan(
+    subscriptions: { plan: PlanTier; startsAt: Date; expiresAt: Date }[],
+    trialEndsAt: Date | null,
+    now: Date,
+  ): EffectivePlan {
     const current = subscriptions.filter((s) => s.startsAt <= now);
     if (current.length > 0) {
       const plan: PlanTier = current.some((s) => s.plan === PlanTier.BUSINESS)

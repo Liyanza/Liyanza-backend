@@ -481,6 +481,24 @@ export class EnvironmentVariables {
   @ValidateIf((env: EnvironmentVariables) => !!env.BILLING_RETURN_URL)
   @IsUrl({ require_tld: false, protocols: ['http', 'https'] })
   BILLING_RETURN_URL?: string;
+
+  /**
+   * Démo publique en lecture seule (`POST /auth/demo`, `DemoModule`).
+   * Chaîne `'true'|'false'` plutôt qu'un booléen, même convention que
+   * `S3_FORCE_PATH_STYLE`. Absente : activée.
+   */
+  @ValidateIf((env: EnvironmentVariables) => !!env.DEMO_ENABLED)
+  @IsIn(['true', 'false'])
+  DEMO_ENABLED?: string;
+
+  /**
+   * Messages au Copilot par jour UTC pour toute l'entreprise de démo, tous
+   * visiteurs confondus (protège le quota du LLM). Défaut : 30.
+   */
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  DEMO_COPILOT_DAILY_MESSAGES?: number;
 }
 
 export function validate(config: Record<string, unknown>) {

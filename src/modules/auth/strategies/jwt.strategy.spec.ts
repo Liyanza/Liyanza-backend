@@ -92,7 +92,17 @@ describe('JwtStrategy', () => {
       email: 'user@test.com',
       role: Role.ADMIN,
       companyId: 'company-1',
+      demo: false,
     });
+  });
+
+  it('should flag a session of the demo company as demo', async () => {
+    prisma.user.findUnique.mockResolvedValue({
+      ...dbUser,
+      company: { isDemo: true },
+    });
+    const result = await strategy.validate(payload);
+    expect(result.demo).toBe(true);
   });
 
   // RÉGRESSION (faille critique corrigée) : le rôle et la companyId doivent
