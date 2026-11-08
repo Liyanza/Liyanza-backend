@@ -1,7 +1,10 @@
 # Production AWS (EC2 « kiyanza-backend », eu-west-3) — voir README.md.
 #
-#   caddy     seul service exposé (80/443), HTTPS automatique (Let's Encrypt)
+#   caddy     seul service exposé (80/443), HTTPS automatique (Let's Encrypt),
+#             configuré par caddy/Caddyfile
 #   api       Liyanza-backend (Dockerfile à la racine du dépôt)
+#   web       site www.kiyanza.com (dépôt Liyanza) : image construite par la CI
+#             de ce dépôt et poussée dans ECR, déployée par deploy-web.sh
 #   postgres  base de données, volume persistant, sauvegardée chaque nuit sur S3
 #   redis     files BullMQ + jetons de rafraîchissement : `noeviction`, jamais
 #             d'éviction silencieuse, et AOF pour survivre à un redémarrage
@@ -15,16 +18,34 @@ services:
   caddy:
     image: caddy:2.10-alpine
     restart: unless-stopped
-    command: caddy reverse-proxy --from ${PUBLIC_HOST:?PUBLIC_HOST manquant dans .env} --to api:3000
+    environment:
+      PUBLIC_HOST: ${PUBLIC_HOST:?PUBLIC_HOST manquant dans .env}
+      WEB_HOST: ${WEB_HOST:-www.kiyanza.com}
+      WEB_APEX_HOST: ${WEB_APEX_HOST:-kiyanza.com}
     ports:
       - '80:80'
       - '443:443'
       - '443:443/udp'
     volumes:
+      # Le dossier et non le fichier : un fichier monté seul garderait son
+      # ancien contenu après un `git checkout` (nouvel inode).
+      - ./caddy:/etc/caddy:ro
       - caddy_data:/data
       - caddy_config:/config
     depends_on:
       - api
+
+  web:
+    image: 922640335967.dkr.ecr.eu-west-3.amazonaws.com/kiyanza-web:prod
+    restart: unless-stopped
+    # Pas d'env_file : le site ne reçoit que ce dont il a besoin. Les
+    # NEXT_PUBLIC_* sont figées au build (variables du dépôt Liyanza).
+    environment:
+      NODE_OPTIONS: --max-old-space-size=384
+      # Même secret que l'API (lu dans .env) : le site relaie l'IP réelle du
+      # visiteur, pour les quotas et limites par visiteur du backend.
+      WEB_PROXY_SECRET: ${WEB_PROXY_SECRET:-}
+    mem_limit: 512m
 
   api:
     build:

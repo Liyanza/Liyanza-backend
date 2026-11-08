@@ -1,19 +1,21 @@
 # Déploiement AWS
 
-Le backend tourne sur une instance EC2 dédiée, en région Paris (`eu-west-3`).
+Le backend et le site (`www.kiyanza.com`, dépôt Liyanza) tournent sur une instance EC2 dédiée, en région Paris (`eu-west-3`).
 
 | Ressource | Valeur |
 |---|---|
 | Compte AWS | `922640335967` (CM - 1) |
 | Instance | `kiyanza-backend` (`i-092ed836d43e8cec5`), t3.small, Ubuntu 24.04, 2 Go de swap |
-| IP fixe | `13.39.6.244`, enregistrement DNS `api.kiyanza.com` chez LWS |
+| IP fixe | `13.39.6.244`, enregistrements DNS `api.kiyanza.com`, `www.kiyanza.com` et `kiyanza.com` chez LWS |
 | Groupe de sécurité | `kiyanza-backend-web` : ports 80 et 443 uniquement, **pas de SSH** |
-| Rôle IAM | `kiyanza-backend-ec2` : Session Manager, écriture des sauvegardes et des métriques |
+| Rôle IAM | `kiyanza-backend-ec2` : Session Manager, écriture des sauvegardes et des métriques, lecture de l'image du site |
 | Sauvegardes | `s3://kiyanza-backend-backups-922640335967/postgres/`, conservées 30 jours |
+| Image du site | ECR `kiyanza-web`, étiquette `prod` = version en ligne, 10 dernières images conservées |
 
 Les conteneurs sont décrits dans [`docker-compose.yml`](docker-compose.yml) :
 
-- **Caddy** gère le HTTPS automatiquement.
+- **Caddy** gère le HTTPS automatiquement, configuré par [`caddy/Caddyfile`](caddy/Caddyfile) : `api.kiyanza.com` → API, `www.kiyanza.com` → site, `kiyanza.com` → redirection vers www.
+- **Le site** (Next.js) est construit par la CI du dépôt Liyanza, voir [Site](#site-wwwkiyanzacom).
 - **L'API** démarre par `prisma migrate deploy`.
 - **PostgreSQL** stocke les données dans un volume persistant.
 - **Redis** est réglé en `noeviction`, avec AOF.
@@ -58,11 +60,54 @@ sudo -u ubuntu git checkout -q -f -B main FETCH_HEAD
 sh deploy/aws/deploy.sh
 ```
 
+## Site (www.kiyanza.com)
+
+Le site (dépôt `Liyanza`, Next.js) tourne dans le conteneur `web`, derrière le même Caddy. Le serveur ne le compile pas : chaque push sur `main` du dépôt Liyanza lance son workflow **Deploy (AWS)**.
+
+1. GitHub Actions construit l'image Docker et la pousse dans ECR (`kiyanza-web`), étiquetée par le commit et par `prod`. Le rôle OIDC `github-deploy-web` n'accepte que la branche `main` du dépôt Liyanza.
+2. Par Session Manager, le serveur lance [`deploy-web.sh`](deploy-web.sh). Le script récupère `prod`, relance le conteneur et attend qu'il soit « healthy ».
+
+Un verrou (`/opt/kiyanza/deploy.lock`) empêche un déploiement du site et un déploiement du backend de se chevaucher. `deploy.sh` ne relance pas le site.
+
+Le site reçoit `WEB_PROXY_SECRET` depuis `.env`, la même valeur que l'API. Les variables `NEXT_PUBLIC_*` sont figées au build : elles se règlent dans les variables du dépôt Liyanza sur GitHub (Settings → Secrets and variables → Actions → Variables), pas sur le serveur.
+
+### Mise en place (une fois)
+
+```sh
+MSYS_NO_PATHCONV=1 AWS_PROFILE=kiyanza sh deploy/aws/setup-web.sh
+```
+
+Le script crée le dépôt ECR, le rôle `github-deploy-web` et la lecture ECR pour l'instance. Il peut être relancé sans risque.
+
+### Bascule DNS du site
+
+Caddy n'obtient le certificat de `www.kiyanza.com` et de `kiyanza.com` qu'une fois leur DNS pointé vers l'instance. Avant, il réessaie seul, en espaçant ses tentatives.
+
+1. Déployer le site au moins une fois (workflow du dépôt Liyanza) et vérifier sur le serveur que `docker compose ps web` affiche `healthy`.
+2. Chez LWS : enregistrement `A` de `kiyanza.com` → `13.39.6.244`, et `www` → `A 13.39.6.244`. Il faut supprimer le `CNAME`/`A` de Vercel.
+3. Une fois le DNS propagé (`nslookup www.kiyanza.com` renvoie `13.39.6.244`), relancer Caddy. Il retente alors tout de suite au lieu d'attendre la fin de sa pause :
+
+   ```sh
+   docker compose restart caddy
+   docker compose logs caddy --tail 30   # « certificate obtained successfully »
+   ```
+
+### Retour arrière du site
+
+Remettre l'étiquette `prod` sur une image précédente (commit `<sha>`), puis relancer le déploiement :
+
+```sh
+manifest=$(aws ecr batch-get-image --region eu-west-3 --repository-name kiyanza-web --image-ids imageTag=<sha> --query 'images[0].imageManifest' --output text --profile kiyanza)
+aws ecr put-image --region eu-west-3 --repository-name kiyanza-web --image-tag prod --image-manifest "$manifest" --profile kiyanza
+# puis, sur le serveur, en root :
+sh /opt/kiyanza/backend/deploy/aws/deploy-web.sh
+```
+
 ## Secrets
 
 Les secrets vivent dans `deploy/aws/.env`, sur le serveur uniquement : ce fichier n'est jamais commité ni copié dans l'image. Pour le modèle, voir [`.env.example`](.env.example) et le `.env.example` à la racine.
 
-Après une modification : `docker compose up -d api`.
+Après une modification : `docker compose up -d api` (et `docker compose up -d web` si `WEB_PROXY_SECRET` a changé).
 
 ## Sauvegardes
 
@@ -83,6 +128,7 @@ docker compose exec -T postgres sh -c 'pg_restore --clean --if-exists --no-owner
 
 ```sh
 docker compose logs -f api
+docker compose logs -f web
 docker compose ps
 ```
 
