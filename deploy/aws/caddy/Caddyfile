@@ -1,0 +1,26 @@
+# HTTPS automatique (Let's Encrypt) pour l'API et le site.
+# Un domaine ne reçoit son certificat qu'une fois son DNS pointé vers l'IP de
+# l'instance : avant la bascule, Caddy réessaie seul en tâche de fond (voir
+# README, « Bascule DNS du site »).
+
+# API (Liyanza-backend)
+{$PUBLIC_HOST} {
+	reverse_proxy api:3000
+}
+
+# Site (dépôt Liyanza, image kiyanza-web). Pas de compression ici : Next.js
+# compresse déjà, et les flux SSE (assistant, Copilot) ne doivent pas être mis
+# en tampon.
+{$WEB_HOST:www.kiyanza.com} {
+	reverse_proxy web:3000 {
+		# Le site lit x-real-ip en priorité pour relayer l'IP du visiteur au
+		# backend (quotas par visiteur) : on l'écrase toujours, sinon un
+		# client pourrait envoyer la sienne et usurper n'importe quelle IP.
+		header_up X-Real-IP {remote_host}
+	}
+}
+
+# Domaine nu : redirection permanente vers www, comme sur Vercel.
+{$WEB_APEX_HOST:kiyanza.com} {
+	redir https://{$WEB_HOST:www.kiyanza.com}{uri} 308
+}

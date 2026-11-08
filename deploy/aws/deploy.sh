@@ -7,11 +7,21 @@
 # Les migrations Prisma s'appliquent au démarrage de l'API. En cas d'échec,
 # les derniers journaux de l'API sont affichés et le script sort en erreur,
 # ce qui fait échouer le job.
+#
+# Le site (service web) a son propre script, deploy-web.sh : il n'est pas
+# relancé ici. Un verrou empêche les deux déploiements de se chevaucher.
 set -eu
 
 cd "$(dirname "$0")"
 
-docker compose up -d --build --remove-orphans
+exec 9>/opt/kiyanza/deploy.lock
+flock 9
+
+docker compose up -d --build --remove-orphans caddy api postgres redis
+# Prend en compte une modification de caddy/Caddyfile, sans coupure. Un
+# conteneur caddy tout juste recréé a déjà lu la nouvelle version.
+docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile \
+  || echo "Rechargement de Caddy impossible (conteneur en démarrage ?), configuration lue au démarrage."
 
 status=starting
 for _ in $(seq 1 36); do
